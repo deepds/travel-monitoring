@@ -1,0 +1,124 @@
+# Развертывание платформы мониторинга стоимости путешествий.
+#
+# Профили:
+#   по умолчанию — postgres, redis, api, worker, beat, ui;
+#   `--profile tools` — разовые контейнеры migrate/bootstrap.
+#
+# Секреты берутся только из .env (см. .env.example) и в репозиторий не попадают.
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: travel-cost-observatory:1.0.0
+  env_file: [.env]
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-tco}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tco}
+    REDIS_URL: redis://redis:6379/0
+    RAW_STORAGE_DIR: /data/raw
+    EXPORT_STORAGE_DIR: /data/exports
+  volumes:
+    - raw_storage:/data/raw
+    - export_storage:/data/exports
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD обязателен}
+      POSTGRES_DB: ${POSTGRES_DB:-tco}
+      # Ускоряет initdb и не влияет на корректность: контейнер одноразовый.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tco} -d ${POSTGRES_DB:-tco}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Порт наружу — только для отладки со стенда.
+    ports: ["${POSTGRES_PORT:-127.0.0.1:5432}:5432"]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-512mb}
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    command: ["api"]
+    ports: ["${API_PORT:-8000}:8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-tco}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tco}
+      REDIS_URL: redis://redis:6379/0
+      RAW_STORAGE_DIR: /data/raw
+      EXPORT_STORAGE_DIR: /data/exports
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A tco.tasks.celery_app:celery_app inspect ping -d worker@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  beat:
+    <<: *app
+    command: ["beat"]
+
+  # Интерфейс: статика React-приложения + проксирование /api на backend,
+  # поэтому фронтенд и API для браузера находятся на одном origin.
+  ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: travel-cost-observatory-ui:1.0.0
+    ports: ["${UI_PORT:-8080}:80"]
+    depends_on:
+      api: {condition: service_started}
+    restart: unless-stopped
+
+  # --- Разовые операции (docker compose --profile tools run --rm ...) -------
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+    profiles: [tools]
+
+  bootstrap:
+    <<: *app
+    command: ["bootstrap"]
+    restart: "no"
+    profiles: [tools]
+
+volumes:
+  pgdata:
+  redisdata:
+  raw_storage:
+  export_storage:
