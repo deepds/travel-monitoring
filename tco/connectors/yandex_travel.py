@@ -77,6 +77,7 @@ class YandexTravelConnector(BaseConnector):
             max_retries=self.context.max_retries,
             backoff_base=self.context.backoff_base,
             backoff_max=self.context.backoff_max,
+            rate_limit_per_minute=self.context.rate_limit_per_minute,
             default_headers={"Authorization": f"OAuth {self.token}", "Accept": "application/json"},
         )
 

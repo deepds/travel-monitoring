@@ -46,6 +46,10 @@ class ConnectorContext:
     backoff_base: float = 0.5
     backoff_max: float = 8.0
     max_offers: int = 300
+    #: Самоограничение темпа обращений к источнику. ``None`` — без ограничения.
+    #: Публичные источники не публикуют лимитов, поэтому значение задается
+    #: нами в каталоге источников и хранится в ``Source.rate_limit_per_minute``.
+    rate_limit_per_minute: int | None = None
     is_synthetic: bool = False
     html_storage_allowed: bool = False
     request_id: str = ""

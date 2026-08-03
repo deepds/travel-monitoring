@@ -181,6 +181,7 @@ def seed_sources(
         source.storage_allowed = bool(entry.get("storage_allowed", True))
         source.html_storage_allowed = bool(entry.get("html_storage_allowed", False))
         source.booking_horizon_days = entry.get("booking_horizon_days")
+        source.rate_limit_per_minute = entry.get("rate_limit_per_minute")
         source.supported_city_codes = list(entry.get("supported_city_codes") or [])
         source.connector_version = REGISTRY[code].version
         source.config = {**default_config_for(code, settings), **(entry.get("config") or {})}

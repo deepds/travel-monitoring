@@ -23,6 +23,7 @@ from tco.core.errors import (
     ConnectorTimeoutError,
 )
 from tco.core.logging import get_logger
+from tco.connectors.throttle import get_throttle
 
 logger = get_logger(__name__)
 
@@ -77,6 +78,7 @@ class ResilientHttpClient:
         backoff_max: float = 8.0,
         default_headers: Mapping[str, str] | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        rate_limit_per_minute: int | None = None,
     ) -> None:
         self.source_code = source_code
         self.allowed_hosts = list(allowed_hosts)
@@ -88,6 +90,10 @@ class ResilientHttpClient:
         self.default_headers = dict(default_headers or {})
         self._sleep = sleep
         self._client: httpx.Client | None = None
+        # Лимиты публичных источников не документированы, поэтому темп
+        # ограничиваем сами: плановый сбор идет пачками и без ограничителя
+        # способен выдать залп в несколько десятков запросов в секунду.
+        self._throttle = get_throttle(source_code, rate_limit_per_minute)
 
     # ------------------------------------------------------------------ #
     # Жизненный цикл
@@ -163,6 +169,10 @@ class ResilientHttpClient:
 
         for attempt in range(self.max_retries + 1):
             attempts = attempt + 1
+            # Ограничитель применяется к каждой попытке, включая ретраи:
+            # именно ретраи после ошибки чаще всего и создают всплеск.
+            elapsed = time.perf_counter() - started
+            self._throttle.acquire(budget_seconds=max(0.0, self.hard_timeout - elapsed))
             try:
                 response = self.client.request(
                     method,
