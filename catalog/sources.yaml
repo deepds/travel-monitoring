@@ -20,7 +20,11 @@ sources:
     storage_allowed: true
     html_storage_allowed: false
     booking_horizon_days: 180
-    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    # Лимиты источником не документированы. 60 запросов/мин выбраны так,
+    # чтобы часовая пачка планового сбора (~220 вызовов, ~660 HTTP-запросов)
+    # укладывалась примерно в 11 минут — с запасом до следующего наблюдения.
+    rate_limit_per_minute: 60
+    supported_city_codes: [MOW, LED, KRR, AER, AAQ, GDZ, KGD, UUS]
     qualification_notes: >
       Публичный MCP-эндпоинт без авторизации. Покрывает авиа, ЖД и проживание,
       что делает его опорным источником MVP. Имена аргументов инструментов
@@ -39,7 +43,11 @@ sources:
     storage_allowed: true
     html_storage_allowed: false
     booking_horizon_days: 120
-    supported_city_codes: [MOW, LED, KRR, AER, KGD]
+    # Лимиты не документированы; сервис отклоняет запросы с дефолтным
+    # User-Agent клиентов вроде curl. Ограничение занижено сознательно:
+    # часовая пачка (~34 вызова) проходит примерно за 5 минут.
+    rate_limit_per_minute: 30
+    supported_city_codes: [MOW, LED, KRR, AER, AAQ, KGD]
     qualification_notes: >
       Публичный JSON-API продажи билетов. Дает детализацию по типам вагонов
       и минимальным ценам. Двухфазный протокол RID обрабатывается коннектором.
@@ -58,7 +66,10 @@ sources:
     storage_allowed: true
     html_storage_allowed: false
     booking_horizon_days: 365
-    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    # Партнерский API с пагинацией и polling, лимиты не опубликованы.
+    # Значение консервативное, уточняется при онбординге.
+    rate_limit_per_minute: 120
+    supported_city_codes: [MOW, LED, KRR, AER, AAQ, GDZ, KGD, UUS]
     qualification_notes: >
       Требует OAuth-токен партнера Яндекс Дистрибуции. Коннектор реализован
       и включается автоматически при заданном YANDEX_TRAVEL_TOKEN. Это второй
@@ -77,7 +88,10 @@ sources:
     storage_allowed: true
     html_storage_allowed: false
     booking_horizon_days: 365
-    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    # Документированный лимит стандартных методов — 200 запросов/мин.
+    # Держим запас до порога.
+    rate_limit_per_minute: 120
+    supported_city_codes: [MOW, LED, KRR, AER, AAQ, GDZ, KGD, UUS]
     qualification_notes: >
       Требует OAuth2 client_credentials. Форма тела POST /v1/search и имена
       полей ответа фиксируются на партнерском онбординге, поэтому маппинг
@@ -98,7 +112,7 @@ sources:
     storage_allowed: true
     html_storage_allowed: false
     booking_horizon_days: 365
-    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    supported_city_codes: [MOW, LED, KRR, AER, AAQ, GDZ, KGD, UUS]
     qualification_notes: >
       Детерминированный генератор рынка для тестов и демонстрации.
       Включается только при SANDBOX_SOURCES_ENABLED=true и допускается
@@ -118,7 +132,7 @@ sources:
     storage_allowed: true
     html_storage_allowed: false
     booking_horizon_days: 365
-    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    supported_city_codes: [MOW, LED, KRR, AER, AAQ, GDZ, KGD, UUS]
     qualification_notes: >
       Второй синтетический источник с иным ценовым смещением: позволяет
       проверять межисточниковую агрегацию и расхождение без внешней сети.

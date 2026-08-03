@@ -37,14 +37,17 @@ from tco.services.scenarios import CSV_COLUMNS  # noqa: E402
 
 CATALOG_DIR = REPO_ROOT / "catalog"
 
-#: Города, у которых нет железнодорожной связи с материковой сетью.
-NO_RAIL = {"UUS"}
+#: Города без железнодорожного сообщения: Южно-Сахалинск — остров без связи
+#: с материковой сетью, Геленджик — ветка заканчивается в Новороссийске.
+NO_RAIL = {"UUS", "GDZ"}
 
 CITY_NAMES = {
     "MOW": "Москва",
     "LED": "Санкт-Петербург",
     "KRR": "Краснодар",
     "AER": "Сочи",
+    "AAQ": "Анапа",
+    "GDZ": "Геленджик",
     "KGD": "Калининград",
     "UUS": "Южно-Сахалинск",
 }
@@ -78,6 +81,11 @@ ROUTES: tuple[Route, ...] = (
     Route("LED", "KGD", 30, ("exclave",)),
     Route("KRR", "AER", 40, ("regional", "short-haul")),
     Route("AER", "KGD", 50, ("cross-region",), both_ways=False),
+    # Курорты Краснодарского края — прямой запрос руководства.
+    Route("MOW", "AAQ", 10, ("leisure", "resort", "south")),
+    Route("LED", "AAQ", 20, ("leisure", "resort")),
+    Route("MOW", "GDZ", 20, ("leisure", "resort", "south")),
+    Route("KRR", "AAQ", 40, ("regional", "short-haul", "resort")),
 )
 
 
@@ -164,8 +172,72 @@ VARIANTS: tuple[Variant, ...] = (
     ),
 )
 
-#: Горизонты бронирования: ближний, средний и дальний.
-LEAD_TIMES: tuple[int, ...] = (30, 60, 90)
+#: Опорный горизонт «витрины»: все сравнимые сценарии стоят на нем.
+BASE_LEAD = 45
+
+#: Лестница горизонта бронирования. Опорное значение исключено — оно уже
+#: есть в блоке A, и дублировать его нельзя: сценарий определяется отпечатком.
+LEAD_LADDER: tuple[int, ...] = (14, 30, 90, 150)
+
+#: Календарные якоря сезонности: (метка, месяц, день).
+#: Берется ближайшее наступление после ``base + MIN_SEASON_LEAD`` в пределах
+#: горизонта источников — иначе сценарий будет отклонен валидацией.
+SEASON_ANCHORS: tuple[tuple[str, int, int], ...] = (
+    ("бархатный сезон", 9, 20),
+    ("низкий сезон", 11, 12),
+    ("новогодние даты", 12, 30),
+    ("после праздников", 1, 20),
+)
+MIN_SEASON_LEAD = 21
+#: Верхняя граница подбора сезонных дат: минимальный горизонт бронирования
+#: среди активных транспортных источников (Туту — 180 дней).
+MAX_SEASON_LEAD = 175
+
+#: Приоритетные направления для лестницы горизонта и сезонности.
+LADDER_ROUTES: tuple[tuple[str, str], ...] = (
+    ("MOW", "LED"),
+    ("MOW", "AER"),
+    ("MOW", "KGD"),
+    ("MOW", "UUS"),
+    ("LED", "AER"),
+)
+SEASON_ROUTES: tuple[tuple[str, str], ...] = (
+    ("MOW", "AER"),
+    ("MOW", "AAQ"),
+    ("MOW", "LED"),
+    ("MOW", "KGD"),
+    ("LED", "AER"),
+    ("KRR", "AER"),
+    ("MOW", "KRR"),
+)
+
+#: Курортные направления для длительного отдыха. Руководство формулирует
+#: типовой запрос как «отдых 10–20 августа», то есть десять ночей, — короткие
+#: поездки на 3–5 ночей такой сценарий не описывают.
+LONG_STAY_ROUTES: tuple[tuple[str, str], ...] = (
+    # «Турист из Москвы отдыхает в Анапе 10–20 августа» — дословный пример
+    # руководства, поэтому направление стоит первым.
+    ("MOW", "AAQ"),
+    ("LED", "AAQ"),
+    ("MOW", "AER"),
+    ("LED", "AER"),
+    ("KRR", "AER"),
+    ("MOW", "GDZ"),
+    ("MOW", "KGD"),
+)
+LONG_STAY_NIGHTS = 10
+
+#: Направления, на которых раскрывается полный набор профилей поездки.
+PROFILE_ROUTES: tuple[tuple[str, str], ...] = (
+    ("MOW", "LED"),
+    ("LED", "MOW"),
+    ("MOW", "AER"),
+    ("AER", "MOW"),
+    ("MOW", "KRR"),
+    ("KRR", "MOW"),
+    ("MOW", "KGD"),
+    ("KGD", "MOW"),
+)
 
 
 def _row(
@@ -207,40 +279,158 @@ def _row(
     }
 
 
-def build_monitoring(base: date) -> list[dict[str, object]]:
-    """Строит каталог мониторинга: маршруты × варианты × горизонты."""
-    rows: list[dict[str, object]] = []
+def _route_priority(origin: str, destination: str) -> int:
+    for route in ROUTES:
+        if (origin, destination) in route.pairs():
+            return route.priority
+    return 100
 
+
+def _route_tags(origin: str, destination: str) -> tuple[str, ...]:
+    for route in ROUTES:
+        if (origin, destination) in route.pairs():
+            return route.tags
+    return ()
+
+
+def _rail_allowed(origin: str, destination: str) -> bool:
+    return origin not in NO_RAIL and destination not in NO_RAIL
+
+
+def _season_dates(base: date) -> list[tuple[str, date]]:
+    """Календарные якоря сезонности, попадающие в горизонт источников."""
+    dates: list[tuple[str, date]] = []
+    for label, month, day in SEASON_ANCHORS:
+        for year in (base.year, base.year + 1):
+            try:
+                candidate = date(year, month, day)
+            except ValueError:  # pragma: no cover - 29 февраля
+                continue
+            lead = (candidate - base).days
+            if MIN_SEASON_LEAD <= lead <= MAX_SEASON_LEAD:
+                dates.append((label, candidate))
+                break
+    return dates
+
+
+def build_monitoring(base: date) -> list[dict[str, object]]:
+    """Строит каталог мониторинга по блокам.
+
+    Каждый блок отвечает за конкретный вопрос руководителя (SCOPE-R C §1):
+
+    * **A. Витрина направлений** — «сколько стоит типовое путешествие» и
+      «какие направления дорожают»: все направления в одинаковых условиях,
+      поэтому сравнимы напрямую.
+    * **B. Профили поездки** — «из чего складывается стоимость»: разные
+      тарифы, классы, типы размещения и составы туристов.
+    * **C. Лестница горизонта** — «как стоимость зависит от горизонта
+      бронирования»: меняется только дата вылета, всё остальное совпадает.
+    * **D. Сезонность** — «как стоимость зависит от даты поездки»: те же
+      условия на календарных якорях (низкий сезон, новогодние даты).
+
+    Ключевое свойство блоков C и D: внутри них сценарии различаются ровно
+    одним параметром. Без этого сравнение горизонтов и сезонов смешивало бы
+    эффект даты с эффектом профиля поездки.
+    """
+    rows: list[dict[str, object]] = []
+    seen: set[tuple] = set()
+
+    def add(origin: str, destination: str, departure: date, variant: Variant,
+            block: str, tags: tuple[str, ...], notes: str) -> None:
+        # Сценарий определяется отпечатком параметров: дубликат в каталоге
+        # не создаст вторую запись, но исказит отчет о покрытии.
+        key = (
+            origin, destination, departure, variant.nights, variant.transport,
+            variant.fare, variant.rail_class, variant.accommodation, variant.stars,
+            variant.meal, variant.cancellation, variant.adults, variant.children,
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append(
+            _row(
+                origin=origin,
+                destination=destination,
+                departure=departure,
+                nights=variant.nights,
+                variant=variant,
+                priority=_route_priority(origin, destination),
+                tags=("monitoring", block, *_route_tags(origin, destination), *tags),
+                notes=notes,
+            )
+        )
+
+    canonical = VARIANTS[0]  # avia-cheap-h3: 2 взрослых, 3★, 5 ночей
+
+    # --- A. Витрина направлений ------------------------------------------ #
     for route in ROUTES:
         for origin, destination in route.pairs():
-            for index, variant in enumerate(VARIANTS):
-                if variant.transport == "RAIL" and (
-                    origin in NO_RAIL or destination in NO_RAIL
-                ):
-                    # ЖД-сценарий для острова невалиден by design — в каталог
-                    # мониторинга он не попадает, но остается в challenge set
-                    # как проверка отбраковки.
-                    continue
+            add(
+                origin, destination, base + timedelta(days=BASE_LEAD), canonical,
+                "block-a-showcase", ("showcase", f"lead{BASE_LEAD}"),
+                f"Витрина: {CITY_NAMES[origin]} → {CITY_NAMES[destination]}, "
+                f"канонические условия, горизонт {BASE_LEAD} дн. "
+                "Блок обеспечивает прямую сравнимость направлений.",
+            )
 
-                # Горизонт чередуется, чтобы наблюдать зависимость цены от
-                # глубины бронирования, не раздувая каталог.
-                lead = LEAD_TIMES[index % len(LEAD_TIMES)]
-                departure = base + timedelta(days=lead)
-                rows.append(
-                    _row(
-                        origin=origin,
-                        destination=destination,
-                        departure=departure,
-                        nights=variant.nights,
-                        variant=variant,
-                        priority=route.priority,
-                        tags=("monitoring", *route.tags, *variant.tags, f"lead{lead}"),
-                        notes=(
-                            f"{CITY_NAMES[origin]} → {CITY_NAMES[destination]}, "
-                            f"профиль «{variant.label}», горизонт {lead} дн."
-                        ),
-                    )
-                )
+    # --- B. Профили поездки ----------------------------------------------- #
+    for origin, destination in PROFILE_ROUTES:
+        for variant in VARIANTS[1:]:
+            if variant.transport == "RAIL" and not _rail_allowed(origin, destination):
+                continue
+            add(
+                origin, destination, base + timedelta(days=BASE_LEAD), variant,
+                "block-b-profiles", ("profile", *variant.tags, f"lead{BASE_LEAD}"),
+                f"Профиль «{variant.label}»: {CITY_NAMES[origin]} → "
+                f"{CITY_NAMES[destination]}, горизонт {BASE_LEAD} дн. "
+                "Блок раскрывает структуру стоимости по тарифам и размещению.",
+            )
+
+    # --- C. Лестница горизонта бронирования -------------------------------- #
+    for origin, destination in LADDER_ROUTES:
+        for lead in LEAD_LADDER:
+            add(
+                origin, destination, base + timedelta(days=lead), canonical,
+                "block-c-lead-time", ("lead-ladder", f"lead{lead}"),
+                f"Лестница горизонта: {CITY_NAMES[origin]} → {CITY_NAMES[destination]}, "
+                f"{lead} дн. до вылета. Отличается от витрины только датой — "
+                "позволяет измерить эффект глубины бронирования.",
+            )
+
+    # --- D. Сезонность ----------------------------------------------------- #
+    for origin, destination in SEASON_ROUTES:
+        for label, departure in _season_dates(base):
+            add(
+                origin, destination, departure, canonical,
+                "block-d-season", ("season", label.replace(" ", "-")),
+                f"Сезонность ({label}): {CITY_NAMES[origin]} → "
+                f"{CITY_NAMES[destination]}, вылет {departure.isoformat()}. "
+                "Условия совпадают с витриной — различается только дата поездки.",
+            )
+
+    # --- E. Длительный отдых ------------------------------------------------ #
+    # Типовой отпускной запрос руководства: десять ночей на курорте, пара и
+    # семья с ребенком. Дает стоимость на человека для полноценного отпуска,
+    # а не для короткой поездки.
+    long_couple = Variant(
+        "long-stay-couple", "AVIA", fare="CHEAPEST", accommodation="HOTEL",
+        stars="3", nights=LONG_STAY_NIGHTS, tags=("long-stay",),
+    )
+    long_family = Variant(
+        "long-stay-family", "AVIA", fare="CABIN_BAGGAGE", accommodation="HOTEL",
+        stars="4", meal="BREAKFAST", adults=2, children=(7,),
+        nights=LONG_STAY_NIGHTS, tags=("long-stay", "family"),
+    )
+    for origin, destination in LONG_STAY_ROUTES:
+        for variant in (long_couple, long_family):
+            add(
+                origin, destination, base + timedelta(days=BASE_LEAD), variant,
+                "block-e-long-stay", (*variant.tags, f"nights{LONG_STAY_NIGHTS}"),
+                f"Длительный отдых: {CITY_NAMES[origin]} → {CITY_NAMES[destination]}, "
+                f"{LONG_STAY_NIGHTS} ночей, профиль «{variant.label}». "
+                "Отвечает на вопрос о стоимости полноценного отпуска на человека.",
+            )
+
     return rows
 
 
@@ -491,17 +681,50 @@ def main() -> int:
         )
         return 1
 
-    # Краткая сводка покрытия — чтобы каталог не деградировал незаметно.
+    # Сводка покрытия — чтобы каталог не деградировал незаметно.
+    import collections
+
     transports = {row["transport_type"] for row in monitoring}
     accommodations = {row["accommodation_type"] for row in monitoring}
     routes = {(row["origin_city_code"], row["destination_city_code"]) for row in monitoring}
     cities = {row["origin_city_code"] for row in monitoring} | {
         row["destination_city_code"] for row in monitoring
     }
+    blocks = collections.Counter(
+        next((tag for tag in str(row["tags"]).split(";") if tag.startswith("block-")), "?")
+        for row in monitoring
+    )
     print(
-        f"Покрытие мониторинга: городов {len(cities)}, маршрутов {len(routes)}, "
+        f"Покрытие: городов {len(cities)}, направлений {len(routes)}, "
         f"транспорт {sorted(transports)}, размещение {sorted(accommodations)}"
     )
+    for block, count in sorted(blocks.items()):
+        print(f"  {block:22} {count}")
+
+    # Контроль главного свойства блоков C и D: сценарии внутри группы
+    # обязаны различаться ровно одной датой, иначе сравнение горизонтов
+    # и сезонов смешает эффект даты с эффектом профиля поездки.
+    comparable = collections.Counter(
+        (
+            row["origin_city_code"], row["destination_city_code"], row["transport_type"],
+            row["flight_fare_type"], row["rail_class"], row["accommodation_type"],
+            row["stars"], row["adults"], row["children_ages"],
+        )
+        for row in monitoring
+    )
+    ladders = sum(1 for count in comparable.values() if count > 1)
+    max_ladder = max(comparable.values())
+    print(
+        f"Групп «всё одинаково, кроме даты»: {ladders}, "
+        f"максимум дат в группе: {max_ladder}"
+    )
+    if ladders == 0:
+        print(
+            "ОШИБКА: не построено ни одной группы для сравнения горизонта и сезона — "
+            "вопрос о зависимости стоимости от даты поездки останется без ответа",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

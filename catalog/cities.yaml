@@ -70,6 +70,35 @@ cities:
     supports_rail: true
     sort_order: 50
 
+  # Анапа и Геленджик добавлены по решению владельца продукта сверх шести
+  # городов, зафиксированных в SCOPE-R C §2: типовой запрос руководства
+  # («отдых в Анапе») требует курортных направлений Краснодарского края.
+  - code: AAQ
+    name: Анапа
+    name_en: Anapa
+    region: Краснодарский край
+    timezone: Europe/Moscow
+    latitude: 44.8944
+    longitude: 37.3164
+    iata_codes: [AAQ]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 45
+
+  - code: GDZ
+    name: Геленджик
+    name_en: Gelendzhik
+    region: Краснодарский край
+    timezone: Europe/Moscow
+    latitude: 44.5622
+    longitude: 38.0768
+    iata_codes: [GDZ]
+    supports_avia: true
+    # Железнодорожной станции в Геленджике нет: ветка заканчивается в
+    # Новороссийске. ЖД-сценарии для города отклоняются валидацией.
+    supports_rail: false
+    sort_order: 55
+
   - code: UUS
     name: Южно-Сахалинск
     name_en: Yuzhno-Sakhalinsk
