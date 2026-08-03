@@ -49,16 +49,21 @@ celery_app.conf.update(
     },
 )
 
-#: Четыре плановых снимка в сутки — каждые 6 часов (DELTA §2.1).
-_snapshot_hours = ",".join(
-    str(hour) for hour in range(0, 24, max(1, settings.snapshot_interval_hours))
+#: Расписание планового наблюдения выводится из ``SNAPSHOT_INTERVAL_HOURS``.
+#: При интервале в 1 час это ежечасный запуск, при 6 — четыре снимка в сутки.
+_interval_hours = max(1, settings.snapshot_interval_hours)
+_snapshot_hours = (
+    "*" if _interval_hours == 1 else ",".join(str(h) for h in range(0, 24, _interval_hours))
 )
+#: Задача живет не дольше своего окна: просроченный запуск бессмысленно
+#: выполнять, когда уже наступило следующее наблюдение.
+_snapshot_expires = max(300, _interval_hours * 3600 - 300)
 
 celery_app.conf.beat_schedule = {
-    "monitoring-every-6-hours": {
+    "monitoring-snapshot": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="5", hour=_snapshot_hours),
-        "options": {"queue": "compute", "expires": 3600},
+        "options": {"queue": "compute", "expires": _snapshot_expires},
     },
     "source-health-check-hourly": {
         "task": "tco.source.health_check_all_sources",
