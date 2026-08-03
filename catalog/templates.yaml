@@ -1,0 +1,99 @@
+# Предустановленные шаблоны конструктора (режим TEMPLATE).
+#
+# Шаблон заполняет часть параметров; маршрут и даты выбирает пользователь.
+
+templates:
+  - code: basic_couple
+    name: Базовый сценарий (2 взрослых)
+    description: >
+      2 взрослых, 1 номер, вместимость подтверждена минимум для 2 взрослых.
+      Гостиница 3★, питание не важно, самый дешевый авиатариф.
+    sort_order: 10
+    defaults:
+      adults: 2
+      children_ages: []
+      transport_type: AVIA
+      flight_fare_type: CHEAPEST
+      accommodation_type: HOTEL
+      stars: "3"
+      meal_type: ANY
+      cancellation_filter: ANY
+      nights: 5
+
+  - code: family_with_child
+    name: Семейный шаблон (2 взрослых + ребенок 7 лет)
+    description: >
+      2 взрослых и 1 ребенок 7 лет, 1 номер, допускающий размещение состава.
+      Гостиница 4★ с завтраком. Модель данных поддерживает массив возрастов
+      детей, даже если шаблон в MVP один.
+    sort_order: 20
+    defaults:
+      adults: 2
+      children_ages: [7]
+      transport_type: AVIA
+      flight_fare_type: CABIN_BAGGAGE
+      accommodation_type: HOTEL
+      stars: "4"
+      meal_type: BREAKFAST
+      cancellation_filter: ANY
+      nights: 7
+
+  - code: rail_compartment
+    name: Поездка на поезде в купе
+    description: 2 взрослых, купе, гостиница 3★, свободная отмена.
+    sort_order: 30
+    defaults:
+      adults: 2
+      children_ages: []
+      transport_type: RAIL
+      rail_class: COMPARTMENT
+      accommodation_type: HOTEL
+      stars: "3"
+      meal_type: ANY
+      cancellation_filter: FREE_CANCELLATION
+      nights: 4
+
+  - code: rail_reserved_seat
+    name: Поездка на поезде в плацкарте
+    description: 2 взрослых, плацкарт, размещение в апартаментах.
+    sort_order: 40
+    defaults:
+      adults: 2
+      children_ages: []
+      transport_type: RAIL
+      rail_class: RESERVED_SEAT
+      accommodation_type: APARTMENT
+      stars: NOT_APPLICABLE
+      meal_type: NO_MEALS
+      cancellation_filter: ANY
+      nights: 3
+
+  - code: business_trip
+    name: Командировка (1 взрослый, багаж)
+    description: 1 взрослый, авиатариф с регистрируемым багажом, гостиница 4★ с завтраком.
+    sort_order: 50
+    defaults:
+      adults: 1
+      children_ages: []
+      transport_type: AVIA
+      flight_fare_type: CHECKED_BAGGAGE
+      accommodation_type: HOTEL
+      stars: "4"
+      meal_type: BREAKFAST
+      cancellation_filter: FREE_CANCELLATION
+      nights: 3
+
+  - code: budget_trip
+    name: Бюджетная поездка (хостел)
+    description: 2 взрослых, самый дешевый авиабилет, хостел без питания.
+    sort_order: 60
+    defaults:
+      adults: 2
+      children_ages: []
+      transport_type: AVIA
+      flight_fare_type: CHEAPEST
+      accommodation_type: HOSTEL
+      stars: NOT_APPLICABLE
+      meal_type: NO_MEALS
+      cancellation_filter: ANY
+      nights: 4

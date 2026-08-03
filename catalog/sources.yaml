@@ -1,0 +1,124 @@
+# Реестр источников с результатами Source Qualification Spike.
+#
+# Статусы: APPROVED — пригоден для MVP; CONDITIONAL — пригоден с оговорками;
+# CANDIDATE — требует проверки с реальными учетными данными;
+# REJECTED — не используется.
+#
+# Полный отчет: docs/SOURCE_QUALIFICATION.md
+
+sources:
+  - code: tutu_mcp
+    name: Туту.ру (MCP)
+    category: TRANSPORT
+    protocol: MCP
+    offer_types: [FLIGHT, RAIL, ACCOMMODATION]
+    qualification_status: APPROVED
+    is_enabled: true
+    requires_credentials: false
+    allowed_hosts: [mcp.tutu.ru]
+    legal_status: PUBLIC_MCP_NO_AUTH
+    storage_allowed: true
+    html_storage_allowed: false
+    booking_horizon_days: 180
+    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    qualification_notes: >
+      Публичный MCP-эндпоинт без авторизации. Покрывает авиа, ЖД и проживание,
+      что делает его опорным источником MVP. Имена аргументов инструментов
+      определяются во время выполнения через tools/list.
+
+  - code: rzd
+    name: РЖД (ticket.rzd.ru)
+    category: TRANSPORT
+    protocol: REST
+    offer_types: [RAIL]
+    qualification_status: APPROVED
+    is_enabled: true
+    requires_credentials: false
+    allowed_hosts: [ticket.rzd.ru]
+    legal_status: PUBLIC_JSON_API
+    storage_allowed: true
+    html_storage_allowed: false
+    booking_horizon_days: 120
+    supported_city_codes: [MOW, LED, KRR, AER, KGD]
+    qualification_notes: >
+      Публичный JSON-API продажи билетов. Дает детализацию по типам вагонов
+      и минимальным ценам. Двухфазный протокол RID обрабатывается коннектором.
+      Южно-Сахалинск не поддерживается: остров без ЖД-связи с материком.
+
+  - code: yandex_travel
+    name: Яндекс Путешествия (Travel Partners API)
+    category: ACCOMMODATION
+    protocol: REST
+    offer_types: [ACCOMMODATION]
+    qualification_status: CONDITIONAL
+    is_enabled: false
+    requires_credentials: true
+    allowed_hosts: [whitelabel.travel.yandex-net.ru, travel.yandex-net.ru]
+    legal_status: PARTNER_OAUTH
+    storage_allowed: true
+    html_storage_allowed: false
+    booking_horizon_days: 365
+    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    qualification_notes: >
+      Требует OAuth-токен партнера Яндекс Дистрибуции. Коннектор реализован
+      и включается автоматически при заданном YANDEX_TRAVEL_TOKEN. Это второй
+      источник проживания, необходимый для KPI покрытия.
+
+  - code: travelline
+    name: TravelLine (Partner Search API)
+    category: ACCOMMODATION
+    protocol: REST
+    offer_types: [ACCOMMODATION]
+    qualification_status: CANDIDATE
+    is_enabled: false
+    requires_credentials: true
+    allowed_hosts: [partner.tlintegration.com]
+    legal_status: PARTNER_OAUTH2
+    storage_allowed: true
+    html_storage_allowed: false
+    booking_horizon_days: 365
+    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    qualification_notes: >
+      Требует OAuth2 client_credentials. Форма тела POST /v1/search и имена
+      полей ответа фиксируются на партнерском онбординге, поэтому маппинг
+      вынесен в config.response_paths. Перевод в APPROVED — только после
+      прогона Source Qualification с реальными ключами.
+
+  - code: sandbox_alpha
+    name: Песочница «Альфа» (синтетические данные)
+    category: TRANSPORT
+    protocol: SYNTHETIC
+    offer_types: [FLIGHT, RAIL, ACCOMMODATION]
+    qualification_status: APPROVED
+    is_enabled: false
+    is_synthetic: true
+    requires_credentials: false
+    allowed_hosts: []
+    legal_status: INTERNAL_SYNTHETIC
+    storage_allowed: true
+    html_storage_allowed: false
+    booking_horizon_days: 365
+    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    qualification_notes: >
+      Детерминированный генератор рынка для тестов и демонстрации.
+      Включается только при SANDBOX_SOURCES_ENABLED=true и допускается
+      исключительно профилем sandbox.
+
+  - code: sandbox_beta
+    name: Песочница «Бета» (синтетические данные)
+    category: TRANSPORT
+    protocol: SYNTHETIC
+    offer_types: [FLIGHT, RAIL, ACCOMMODATION]
+    qualification_status: APPROVED
+    is_enabled: false
+    is_synthetic: true
+    requires_credentials: false
+    allowed_hosts: []
+    legal_status: INTERNAL_SYNTHETIC
+    storage_allowed: true
+    html_storage_allowed: false
+    booking_horizon_days: 365
+    supported_city_codes: [MOW, LED, KRR, AER, KGD, UUS]
+    qualification_notes: >
+      Второй синтетический источник с иным ценовым смещением: позволяет
+      проверять межисточниковую агрегацию и расхождение без внешней сети.

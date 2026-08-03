@@ -1,0 +1,85 @@
+# Справочник поддерживаемых городов MVP.
+#
+# `source_ids` — идентификаторы города в конкретных источниках. Значения,
+# которые не подтверждены, намеренно не заполняются: коннекторы разрешают их
+# динамически (РЖД — через /suggests, Туту — через ресурс tutu://geo,
+# Яндекс — через hotels/suggest) и кэшируют результат. Прописывать
+# непроверенные коды опаснее, чем разрешать их во время выполнения.
+
+cities:
+  - code: MOW
+    name: Москва
+    name_en: Moscow
+    region: Москва
+    timezone: Europe/Moscow
+    latitude: 55.7558
+    longitude: 37.6173
+    iata_codes: [SVO, DME, VKO, ZIA]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 10
+
+  - code: LED
+    name: Санкт-Петербург
+    name_en: Saint Petersburg
+    region: Санкт-Петербург
+    timezone: Europe/Moscow
+    latitude: 59.9311
+    longitude: 30.3609
+    iata_codes: [LED]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 20
+
+  - code: KRR
+    name: Краснодар
+    name_en: Krasnodar
+    region: Краснодарский край
+    timezone: Europe/Moscow
+    latitude: 45.0355
+    longitude: 38.9753
+    iata_codes: [KRR]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 30
+
+  - code: AER
+    name: Сочи
+    name_en: Sochi
+    region: Краснодарский край
+    timezone: Europe/Moscow
+    latitude: 43.5855
+    longitude: 39.7231
+    iata_codes: [AER]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 40
+
+  - code: KGD
+    name: Калининград
+    name_en: Kaliningrad
+    region: Калининградская область
+    timezone: Europe/Kaliningrad
+    latitude: 54.7104
+    longitude: 20.4522
+    iata_codes: [KGD]
+    supports_avia: true
+    # ЖД-сообщение существует, но идет транзитом через территорию других
+    # государств и требует отдельных документов. Для MVP направление
+    # поддерживается, ограничение зафиксировано в docs/LIMITATIONS.md.
+    supports_rail: true
+    sort_order: 50
+
+  - code: UUS
+    name: Южно-Сахалинск
+    name_en: Yuzhno-Sakhalinsk
+    region: Сахалинская область
+    timezone: Asia/Sakhalin
+    latitude: 46.9591
+    longitude: 142.7380
+    iata_codes: [UUS]
+    supports_avia: true
+    # Остров не имеет железнодорожной связи с материковой сетью:
+    # ЖД-сценарии для этого города невалидны by design.
+    supports_rail: false
+    sort_order: 60

@@ -1,0 +1,93 @@
+# Профиль для песочницы и приемочных прогонов без внешней сети.
+#
+# Единственное содержательное отличие от baseline — допуск синтетических
+# источников. Любой ScenarioRun, рассчитанный по этому профилю, помечается
+# признаком contains_synthetic_data и не может выдаваться за рыночную оценку.
+
+code: sandbox
+name: Песочница (синтетические источники)
+version: "1.0.0"
+description: >
+  Демонстрационный и тестовый профиль. Допускает источники-песочницы,
+  чтобы прогонять полный конвейер без внешних зависимостей.
+  Запрещен к использованию для управленческих выводов.
+
+rules:
+  filters:
+    require_base_currency: true
+    min_price: 1.0
+    max_price: null
+    require_capacity_confirmation: true
+    strict_baggage_classification: true
+    stars_exact_match: true
+    meal_at_least_requested: true
+    max_stops: null
+    enforce_cancellation_filter: true
+    allow_synthetic_sources: true
+
+  eligibility:
+    min_valid_offers: 5
+    max_data_age_minutes: 1440
+    max_invalid_offer_ratio: 0.30
+    max_unclassified_fare_ratio: 0.40
+    min_offers_after_dedup: 3
+    require_successful_call: true
+    min_source_confidence: null
+
+  outliers:
+    method: IQR
+    iqr_multiplier: 1.5
+    min_sample_size: 4
+    scope: PER_SOURCE
+    max_outlier_ratio: 0.4
+
+  aggregation:
+    per_source_statistic: MEDIAN
+    trim_ratio: 0.1
+    cross_source_method: MEDIAN_OF_MEDIANS
+    two_source_method: MEAN
+    percentile_method: LINEAR
+    high_disagreement_threshold: 0.30
+    allow_single_source: true
+
+  quality:
+    weights:
+      component_completeness: 0.30
+      source_count: 0.20
+      offer_count: 0.15
+      source_agreement: 0.15
+      freshness: 0.10
+      connector_stability: 0.10
+    partial_success_threshold: 60.0
+    target_source_count: 2
+    target_offer_count: 20
+    single_source_agreement_score: 0.5
+    default_connector_stability: 0.8
+    stability_window_days: 30
+
+  confidence:
+    high_min_quality: 80.0
+    medium_min_quality: 60.0
+    low_min_quality: 40.0
+    high_min_sources_per_component: 2
+    high_max_disagreement: 0.15
+    high_min_source_confidence: 60.0
+    max_unclassified_ratio: 0.40
+
+  limits:
+    source_soft_timeout_seconds: 20.0
+    source_hard_timeout_seconds: 30.0
+    on_demand_total_timeout_seconds: 60.0
+    max_retries: 2
+    max_offers_per_source: 300
+    result_cache_ttl_minutes: 45
+
+  transport_pricing:
+    rail_child_fare_ratio: 1.0
+    rail_child_max_age: 9
+    max_roundtrip_combinations: 64
+    roundtrip_legs_per_direction: 8
+
+  allowed_source_codes: []
+  excluded_source_codes: []
+  rounding_digits: 0
