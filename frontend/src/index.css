@@ -1,0 +1,32 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #f5f6f8;
+}
+
+/* Таблицы аналитики часто шире экрана — прокрутка должна жить внутри блока,
+   а не растягивать страницу по горизонтали. */
+.ant-table-wrapper {
+  overflow-x: auto;
+}
+
+.tco-content {
+  padding: 24px;
+  max-width: 1680px;
+  margin: 0 auto;
+}
+
+.tco-monospace {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.tco-clickable {
+  cursor: pointer;
+}

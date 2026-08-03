@@ -1,0 +1,153 @@
+/** Общие элементы интерфейса, повторяющиеся на нескольких экранах. */
+
+import {
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  ExperimentOutlined,
+  InfoCircleOutlined,
+  MinusOutlined,
+} from '@ant-design/icons';
+import { Alert, Card, Empty, Spin, Statistic, Tag, Tooltip, Typography } from 'antd';
+import type { ReactNode } from 'react';
+
+import type { ConfidenceLevel, RunStatus } from '@/api/types';
+import {
+  CONFIDENCE_COLOR, CONFIDENCE_LABEL, RUN_STATUS_COLOR, RUN_STATUS_LABEL,
+  changeTone, signedPercent,
+} from '@/utils/format';
+
+const { Text } = Typography;
+
+/** Обязательная оговорка: показатель не является офертой и не средний чек. */
+export function MetricDisclaimer({ text }: { text?: string | null }) {
+  return (
+    <Alert
+      type="info"
+      showIcon
+      icon={<InfoCircleOutlined />}
+      message="Расчетная типовая стоимость путешествия"
+      description={
+        text ??
+        'Показатель является расчетной оценкой на основе доступных рыночных предложений. ' +
+          'Это не оферта, не средний чек и не фактическая стоимость поездки. Расходы на ' +
+          'развлечения, питание вне объекта размещения, трансферы и локальные траты не учитываются.'
+      }
+      style={{ marginBottom: 16 }}
+    />
+  );
+}
+
+export function ConfidenceTag({ level, reason }: { level: ConfidenceLevel | null; reason?: string | null }) {
+  if (!level) return <Tag>—</Tag>;
+  const tag = <Tag color={CONFIDENCE_COLOR[level]}>{CONFIDENCE_LABEL[level]}</Tag>;
+  return reason ? <Tooltip title={reason}>{tag}</Tooltip> : tag;
+}
+
+export function RunStatusTag({ status }: { status: RunStatus }) {
+  return <Tag color={RUN_STATUS_COLOR[status]}>{RUN_STATUS_LABEL[status] ?? status}</Tag>;
+}
+
+/** Признак синтетических данных обязан быть виден везде, где показан результат. */
+export function SyntheticTag({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  return (
+    <Tooltip title="В расчете участвовали предложения синтетического источника-песочницы. Это не рыночные данные.">
+      <Tag color="purple" icon={<ExperimentOutlined />}>
+        Синтетические данные
+      </Tag>
+    </Tooltip>
+  );
+}
+
+export function ChangeIndicator({ value }: { value: number | null | undefined }) {
+  const tone = changeTone(value);
+  const color = tone === 'up' ? '#cf1322' : tone === 'down' ? '#3f8600' : '#8c8c8c';
+  const Icon = tone === 'up' ? ArrowUpOutlined : tone === 'down' ? ArrowDownOutlined : MinusOutlined;
+  return (
+    <Text style={{ color, whiteSpace: 'nowrap' }}>
+      <Icon /> {signedPercent(value)}
+    </Text>
+  );
+}
+
+interface MetricCardProps {
+  title: string;
+  value: ReactNode;
+  suffix?: ReactNode;
+  extra?: ReactNode;
+  hint?: string;
+  loading?: boolean;
+}
+
+export function MetricCard({ title, value, suffix, extra, hint, loading }: MetricCardProps) {
+  return (
+    <Card size="small" loading={loading}>
+      <Statistic
+        title={
+          hint ? (
+            <span>
+              {title}{' '}
+              <Tooltip title={hint}>
+                <InfoCircleOutlined style={{ color: '#8c8c8c' }} />
+              </Tooltip>
+            </span>
+          ) : (
+            title
+          )
+        }
+        value={value as string}
+        suffix={suffix}
+        valueStyle={{ fontSize: 22 }}
+      />
+      {extra ? <div style={{ marginTop: 8 }}>{extra}</div> : null}
+    </Card>
+  );
+}
+
+interface AsyncBlockProps {
+  loading: boolean;
+  error: string | null;
+  empty?: boolean;
+  emptyText?: string;
+  children: ReactNode;
+  minHeight?: number;
+}
+
+/** Единая обработка состояний загрузки, ошибки и пустого результата. */
+export function AsyncBlock({
+  loading, error, empty, emptyText, children, minHeight = 120,
+}: AsyncBlockProps) {
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight }}>
+        <Spin />
+      </div>
+    );
+  }
+  if (error) {
+    return <Alert type="error" showIcon message="Не удалось загрузить данные" description={error} />;
+  }
+  if (empty) {
+    return <Empty description={emptyText ?? 'Нет данных'} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+  return <>{children}</>;
+}
+
+export function PageTitle({ title, subtitle, extra }: { title: string; subtitle?: string; extra?: ReactNode }) {
+  return (
+    <div
+      style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+        marginBottom: 16, gap: 16, flexWrap: 'wrap',
+      }}
+    >
+      <div>
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          {title}
+        </Typography.Title>
+        {subtitle ? <Text type="secondary">{subtitle}</Text> : null}
+      </div>
+      {extra ? <div>{extra}</div> : null}
+    </div>
+  );
+}

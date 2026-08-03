@@ -1,0 +1,216 @@
+import { App, Button, Card, Input, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+
+import { ApiError, api } from '@/api/client';
+import type { ScenarioBrief } from '@/api/types';
+import { AsyncBlock, PageTitle } from '@/components/common';
+import { useAuth } from '@/auth/AuthContext';
+import { useAsync } from '@/hooks/useAsync';
+import { ACCOMMODATION_LABEL, TRANSPORT_LABEL, dateOnly, starsLabel } from '@/utils/format';
+
+export default function ScenariosPage() {
+  const { message } = App.useApp();
+  const { can } = useAuth();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState('');
+  const [origin, setOrigin] = useState<string>();
+  const [destination, setDestination] = useState<string>();
+  const [transport, setTransport] = useState<string>();
+  const [scenarioType, setScenarioType] = useState<string>();
+  const [activeOnly, setActiveOnly] = useState<boolean | undefined>();
+
+  const cities = useAsync(() => api.cities(), []);
+  const query = useMemo(
+    () => ({
+      page,
+      page_size: pageSize,
+      search: search || undefined,
+      origin,
+      destination,
+      transport_type: transport,
+      scenario_type: scenarioType,
+      is_active: activeOnly,
+    }),
+    [page, pageSize, search, origin, destination, transport, scenarioType, activeOnly],
+  );
+
+  const scenarios = useAsync(() => api.scenarios(query), [JSON.stringify(query)]);
+
+  const toggleActive = async (row: ScenarioBrief) => {
+    try {
+      if (row.is_active) await api.deactivateScenario(row.id);
+      else await api.activateScenario(row.id);
+      message.success(row.is_active ? 'Сценарий деактивирован' : 'Сценарий активирован');
+      scenarios.reload();
+    } catch (exc) {
+      message.error(exc instanceof ApiError ? exc.message : 'Не удалось изменить сценарий');
+    }
+  };
+
+  const remove = async (row: ScenarioBrief) => {
+    try {
+      await api.deleteScenario(row.id);
+      message.success('Сценарий удален (мягко): исторические расчеты сохранены');
+      scenarios.reload();
+    } catch (exc) {
+      message.error(exc instanceof ApiError ? exc.message : 'Не удалось удалить сценарий');
+    }
+  };
+
+  const cityOptions = (cities.data?.items ?? []).map((c) => ({ value: c.code, label: c.name }));
+
+  return (
+    <>
+      <PageTitle
+        title="Сценарии наблюдения"
+        subtitle="Каждая уникальная комбинация параметров — отдельный сценарий со стабильным отпечатком"
+      />
+
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space wrap>
+          <Input.Search
+            allowClear
+            placeholder="Код или название"
+            style={{ width: 260 }}
+            onSearch={(value) => {
+              setSearch(value);
+              setPage(1);
+            }}
+          />
+          <Select allowClear placeholder="Откуда" style={{ width: 160 }} options={cityOptions}
+            value={origin} onChange={(v) => { setOrigin(v); setPage(1); }} />
+          <Select allowClear placeholder="Куда" style={{ width: 160 }} options={cityOptions}
+            value={destination} onChange={(v) => { setDestination(v); setPage(1); }} />
+          <Select allowClear placeholder="Транспорт" style={{ width: 130 }}
+            options={[{ value: 'AVIA', label: 'Авиа' }, { value: 'RAIL', label: 'ЖД' }]}
+            value={transport} onChange={(v) => { setTransport(v); setPage(1); }} />
+          <Select allowClear placeholder="Режим" style={{ width: 150 }}
+            options={[
+              { value: 'MONITORING', label: 'Мониторинг' },
+              { value: 'ON_DEMAND', label: 'По запросу' },
+              { value: 'TEMPLATE', label: 'Шаблон' },
+            ]}
+            value={scenarioType} onChange={(v) => { setScenarioType(v); setPage(1); }} />
+          <Select allowClear placeholder="Активность" style={{ width: 140 }}
+            options={[{ value: 'true', label: 'Активные' }, { value: 'false', label: 'Неактивные' }]}
+            value={activeOnly === undefined ? undefined : String(activeOnly)}
+            onChange={(v) => { setActiveOnly(v === undefined ? undefined : v === 'true'); setPage(1); }} />
+        </Space>
+      </Card>
+
+      <Card size="small">
+        <AsyncBlock loading={scenarios.loading} error={scenarios.error}>
+          <Table<ScenarioBrief>
+            size="small"
+            rowKey="id"
+            dataSource={scenarios.data?.items ?? []}
+            scroll={{ x: 1100 }}
+            pagination={{
+              current: page,
+              pageSize,
+              total: scenarios.data?.meta.total ?? 0,
+              showSizeChanger: true,
+              showTotal: (total) => `всего ${total}`,
+              onChange: (nextPage, nextSize) => {
+                setPage(nextPage);
+                setPageSize(nextSize);
+              },
+            }}
+            columns={[
+              {
+                title: 'Код',
+                dataIndex: 'code',
+                fixed: 'left',
+                width: 260,
+                render: (value: string, row) => (
+                  <Link to={`/scenarios/${row.id}`} className="tco-monospace">
+                    {value}
+                  </Link>
+                ),
+              },
+              {
+                title: 'Маршрут',
+                key: 'route',
+                render: (_, row) => (
+                  <span>
+                    {row.origin?.name} → {row.destination?.name}
+                  </span>
+                ),
+              },
+              {
+                title: 'Даты',
+                key: 'dates',
+                render: (_, row) => (
+                  <span>
+                    {dateOnly(row.departure_date)} — {dateOnly(row.return_date)}
+                    <br />
+                    <span style={{ color: '#8c8c8c', fontSize: 12 }}>{row.nights} ноч.</span>
+                  </span>
+                ),
+              },
+              {
+                title: 'Транспорт',
+                dataIndex: 'transport_type',
+                render: (value: string) => <Tag>{TRANSPORT_LABEL[value] ?? value}</Tag>,
+              },
+              {
+                title: 'Размещение',
+                key: 'accommodation',
+                render: (_, row) => (
+                  <span>
+                    {ACCOMMODATION_LABEL[row.accommodation_type] ?? row.accommodation_type}
+                    <br />
+                    <span style={{ color: '#8c8c8c', fontSize: 12 }}>{starsLabel(row.stars)}</span>
+                  </span>
+                ),
+              },
+              {
+                title: 'Режим',
+                dataIndex: 'scenario_type',
+                render: (value: string) => <Tag color={value === 'MONITORING' ? 'blue' : 'default'}>{value}</Tag>,
+              },
+              {
+                title: 'Статус',
+                dataIndex: 'is_active',
+                render: (value: boolean) =>
+                  value ? <Tag color="success">активен</Tag> : <Tag>выключен</Tag>,
+              },
+              ...(can('ADMIN')
+                ? [
+                    {
+                      title: 'Действия',
+                      key: 'actions',
+                      fixed: 'right' as const,
+                      width: 190,
+                      render: (_: unknown, row: ScenarioBrief) => (
+                        <Space size="small">
+                          <Switch
+                            size="small"
+                            checked={row.is_active}
+                            onChange={() => toggleActive(row)}
+                          />
+                          <Popconfirm
+                            title="Удалить сценарий?"
+                            description="Мягкое удаление: исторические расчеты сохранятся."
+                            okText="Удалить"
+                            cancelText="Отмена"
+                            onConfirm={() => remove(row)}
+                          >
+                            <Button size="small" danger type="text">
+                              Удалить
+                            </Button>
+                          </Popconfirm>
+                        </Space>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        </AsyncBlock>
+      </Card>
+    </>
+  );
+}
