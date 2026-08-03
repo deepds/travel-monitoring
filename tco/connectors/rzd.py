@@ -51,7 +51,11 @@ class RzdConnector(BaseConnector):
     requires_credentials = False
     default_allowed_hosts = ("ticket.rzd.ru",)
 
-    PRICING_PATH = "/api/v1/railway-service/prices/train-pricing"
+    #: Проверено на живом сервисе 2026-08-04. Публичный путь
+    #: ``/api/v1/railway-service/prices/train-pricing`` устойчиво отвечает
+    #: ``500 INTERNAL_ERROR`` на любой формат тела, тогда как B2B-путь
+    #: возвращает полноценную выдачу и сам называет некорректные поля.
+    PRICING_PATH = "/apib2b/p/Railway/V1/Search/TrainPricing"
     SUGGEST_PATH = "/api/v1/suggests"
 
     def __init__(self, context) -> None:  # noqa: ANN001
@@ -129,7 +133,9 @@ class RzdConnector(BaseConnector):
         body = {
             "Origin": origin_code,
             "Destination": destination_code,
-            "DepartDate": depart_date.strftime("%d.%m.%Y"),
+            # Поле называется DepartureDate: сервис явно сообщает об этом
+            # ошибкой «Параметр 'request.DepartureDate' должен быть задан».
+            "DepartureDate": depart_date.strftime("%Y-%m-%dT00:00:00"),
             "TimeFrom": 0,
             "TimeTo": 24,
             "CarGrouping": "DontGroup",
@@ -380,69 +386,94 @@ def _first_station_code(payload: Any, normalized_city: str) -> str | None:
 
 
 def _parse_trains(payload: Any) -> list[dict[str, Any]]:
-    """Разворачивает ответ ``train-pricing`` в плоский список «поезд × класс»."""
+    """Разворачивает ответ поиска в плоский список «поезд × класс вагона».
+
+    Основная форма ответа — ``{"Trains": [...]}`` (проверено на живом
+    сервисе). Форма ``{"Tp": [{"List": [...]}]}`` поддерживается как запасная:
+    она встречается у части провайдеров и в исторических ответах.
+    """
     trains: list[dict[str, Any]] = []
-    containers = payload.get("Tp") if isinstance(payload, dict) else None
-    if not isinstance(containers, list):
-        containers = [payload] if isinstance(payload, dict) else []
+    items = _train_items(payload)
 
-    for container in containers:
-        items = container.get("List") if isinstance(container, dict) else None
-        if not isinstance(items, list):
+    for train in items:
+        if not isinstance(train, dict):
             continue
-        for train in items:
-            if not isinstance(train, dict):
-                continue
-            if train.get("IsSaleForbidden") is True:
-                continue
-            base = {
-                "train_number": train.get("TrainNumber") or train.get("Number"),
-                "train_name": train.get("TrainName") or train.get("BrandName"),
-                "origin_code": _stringify(train.get("Code0") or train.get("OriginStationCode")),
-                "destination_code": _stringify(
-                    train.get("Code1") or train.get("DestinationStationCode")
-                ),
-                "origin_name": train.get("Station0") or train.get("OriginStationName"),
-                "destination_name": train.get("Station1") or train.get("DestinationStationName"),
-                "departure_at": parse_datetime(
-                    _join_datetime(train.get("Date0"), train.get("Time0"))
-                ),
-                "arrival_at": parse_datetime(_join_datetime(train.get("Date1"), train.get("Time1"))),
-                "duration_minutes": _duration_minutes(train.get("TimeInWay")),
-                "carriers": _carriers(train),
-                "is_two_storey": bool(train.get("IsTwoStorey")),
-            }
+        if train.get("IsSaleForbidden") is True:
+            continue
+        base = {
+            "train_number": train.get("TrainNumber") or train.get("DisplayTrainNumber"),
+            "train_name": train.get("TrainName") or train.get("TrainDescription"),
+            "origin_code": _stringify(
+                train.get("OriginStationCode") or train.get("InitialTrainStationCode")
+            ),
+            "destination_code": _stringify(
+                train.get("DestinationStationCode") or train.get("FinalTrainStationCode")
+            ),
+            "origin_name": train.get("OriginStationName") or train.get("OriginName"),
+            "destination_name": (
+                train.get("DestinationStationName") or train.get("DestinationName")
+            ),
+            "departure_at": parse_datetime(
+                train.get("DepartureDateTime") or train.get("LocalDepartureDateTime")
+            ),
+            "arrival_at": parse_datetime(
+                train.get("ArrivalDateTime") or train.get("LocalArrivalDateTime")
+            ),
+            # TripDuration приходит числом минут (например, 521.0).
+            "duration_minutes": _duration_minutes(train.get("TripDuration")),
+            "carriers": _carriers(train),
+            "is_two_storey": bool(train.get("HasTwoStoreyCars")),
+        }
 
-            car_groups = train.get("CarGroups") or train.get("Cars") or []
-            if not isinstance(car_groups, list):
+        car_groups = train.get("CarGroups") or train.get("Cars") or []
+        if not isinstance(car_groups, list):
+            continue
+        for group in car_groups:
+            if not isinstance(group, dict):
                 continue
-            for group in car_groups:
-                if not isinstance(group, dict):
-                    continue
-                if group.get("IsSaleForbidden") is True:
-                    continue
-                car_type = _map_car_type(group)
-                if car_type is None:
-                    continue
-                price = to_decimal(group.get("MinPrice") or group.get("Price"))
-                if price is None:
-                    continue
-                service_classes = group.get("ServiceClasses") or group.get("ServiceClass") or []
-                if isinstance(service_classes, str):
-                    service_classes = [service_classes]
-                trains.append(
-                    {
-                        **base,
-                        "car_type": car_type,
-                        "car_type_name": group.get("CarTypeName") or group.get("CarType"),
-                        "price": price,
-                        "available_places": _as_int(
-                            group.get("TotalPlaceQuantity") or group.get("PlaceQuantity")
-                        ),
-                        "service_classes": [str(item) for item in service_classes if item],
-                    }
-                )
+            if group.get("IsSaleForbidden") is True:
+                continue
+            car_type = _map_car_type(group)
+            if car_type is None:
+                # Люкс, СВ и сидячие вагоны вне поддерживаемых MVP классов.
+                continue
+            price = to_decimal(group.get("MinPrice") or group.get("Price"))
+            if price is None:
+                continue
+            service_classes = group.get("ServiceClasses") or group.get("ServiceClass") or []
+            if isinstance(service_classes, str):
+                service_classes = [service_classes]
+            trains.append(
+                {
+                    **base,
+                    "car_type": car_type,
+                    "car_type_name": group.get("CarTypeName") or group.get("CarType"),
+                    "price": price,
+                    "available_places": _as_int(
+                        group.get("TotalPlaceQuantity") or group.get("PlaceQuantity")
+                    ),
+                    "service_classes": [str(item) for item in service_classes if item],
+                }
+            )
     return trains
+
+
+def _train_items(payload: Any) -> list[Any]:
+    """Возвращает список поездов из любой поддерживаемой формы ответа."""
+    if not isinstance(payload, dict):
+        return []
+    direct = payload.get("Trains")
+    if isinstance(direct, list):
+        return direct
+    containers = payload.get("Tp")
+    if isinstance(containers, list):
+        items: list[Any] = []
+        for container in containers:
+            nested = container.get("List") if isinstance(container, dict) else None
+            if isinstance(nested, list):
+                items.extend(nested)
+        return items
+    return []
 
 
 def _map_car_type(group: dict[str, Any]) -> str | None:

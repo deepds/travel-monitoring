@@ -82,7 +82,7 @@ ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "children": ("children", "children_count", "child"),
     "children_ages": ("children_ages", "child_ages", "children_age", "kids_ages"),
     "infants": ("infants", "infant", "infants_count"),
-    "city": ("city", "city_id", "geo_id", "region_id", "location", "destination", "where", "place"),
+    "city": ("city_name", "city", "city_id", "geo_id", "region_id", "location", "where", "place"),
     "check_in": ("check_in", "checkin", "date_from", "arrival_date", "from_date"),
     "check_out": ("check_out", "checkout", "date_to", "departure_date", "to_date"),
     "stars_min": ("stars_min", "min_stars", "stars_from"),
@@ -116,6 +116,24 @@ def _prop_type(schema_properties: dict[str, Any], name: str) -> str:
             if isinstance(variant, dict) and variant.get("type") not in (None, "null"):
                 return str(variant["type"])
     return "string"
+
+
+def _clamp_to_schema(value: Any, prop: dict[str, Any]) -> tuple[Any, str | None]:
+    """Приводит числовое значение к границам, объявленным в схеме инструмента.
+
+    Коннектор читает схему инструмента, значит обязан соблюдать и ее
+    ограничения. Иначе аргумент вроде ``page_size=50`` при максимуме 30
+    приводит к ошибке валидации на стороне сервера и пустой выдаче по
+    формально исправному запросу.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return value, None
+    minimum, maximum = prop.get("minimum"), prop.get("maximum")
+    if maximum is not None and value > maximum:
+        return type(value)(maximum), f"уменьшено до максимума {maximum}"
+    if minimum is not None and value < minimum:
+        return type(value)(minimum), f"увеличено до минимума {minimum}"
+    return value, None
 
 
 def _coerce(value: Any, target_type: str) -> Any:
@@ -285,13 +303,27 @@ class TutuMcpConnector(BaseConnector):
         logical: str,
         value: Any,
     ) -> str | None:
-        """Кладет значение под реальным именем аргумента с приведением типа."""
+        """Кладет значение под реальным именем аргумента.
+
+        Значение приводится к объявленному типу и, если схема задает границы,
+        зажимается в них.
+        """
         if value is None:
             return None
         name = _pick_arg(props, logical)
         if name is None:
             return None
-        args[name] = _coerce(value, _prop_type(props, name))
+        coerced = _coerce(value, _prop_type(props, name))
+        clamped, note = _clamp_to_schema(coerced, props.get(name) or {})
+        if note:
+            self.log.info(
+                "Аргумент приведен к границам схемы инструмента",
+                argument=name,
+                requested=coerced,
+                applied=clamped,
+                note=note,
+            )
+        args[name] = clamped
         return name
 
     def _geo_lookup(self, mcp: McpClient, city_name: str) -> Any | None:
