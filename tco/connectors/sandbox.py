@@ -482,7 +482,14 @@ class SandboxConnector(BaseConnector):
         )
         lead = (query.check_in - datetime.now(UTC).date()).days
         requested_stars = int(query.stars) if query.stars.isdigit() else None
+        # `UNRATED` — гостиницы без официальной классификации. Это отдельный
+        # запрос, а не «звезды неизвестны»: реальный источник по такому фильтру
+        # возвращает именно неклассифицированные объекты.
+        requested_unrated = query.stars == "UNRATED"
         star_factor = 1.0 if requested_stars is None else (0.55 + 0.34 * requested_stars)
+        if requested_unrated:
+            # Без категории объекты в среднем дешевле трехзвездочных.
+            star_factor = 0.8
 
         base_night = (
             2600
@@ -521,8 +528,11 @@ class SandboxConnector(BaseConnector):
             per_night = base_night * noise * meal_factor * cancel_factor * outlier_factor
             total = per_night * nights
 
-            if requested_stars is not None:
-                stars_value: int | None = requested_stars
+            if requested_unrated:
+                stars_value: int | None = None
+                unrated = True
+            elif requested_stars is not None:
+                stars_value = requested_stars
                 unrated = False
             elif star_range == (0, 0):
                 stars_value, unrated = None, True
