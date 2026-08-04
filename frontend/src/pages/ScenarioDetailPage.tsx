@@ -1,13 +1,14 @@
 import { PlayCircleOutlined } from '@ant-design/icons';
-import { App, Button, Card, Col, Descriptions, Row, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Col, Descriptions, Row, Space, Switch, Table, Tag } from 'antd';
 import ReactECharts from 'echarts-for-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
 import {
   AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
 } from '@/components/common';
+import { ScenarioDeleteModal } from '@/components/ScenarioDialogs';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
 import {
@@ -22,6 +23,8 @@ export default function ScenarioDetailPage() {
   const { message } = App.useApp();
   const { can } = useAuth();
   const navigate = useNavigate();
+
+  const [deleting, setDeleting] = useState(false);
 
   const scenario = useAsync(() => api.scenario(id), [id]);
   const history = useAsync(() => api.scenarioHistory(id, { limit: 200 }), [id]);
@@ -76,21 +79,62 @@ export default function ScenarioDetailPage() {
 
   const data = scenario.data;
 
+  const toggleActive = async () => {
+    if (!data) return;
+    try {
+      if (data.is_active) await api.deactivateScenario(data.id);
+      else await api.activateScenario(data.id);
+      message.success(
+        data.is_active
+          ? 'Сценарий снят с планового наблюдения'
+          : 'Сценарий поставлен на плановое наблюдение',
+      );
+      scenario.reload();
+    } catch (exc) {
+      message.error(exc instanceof ApiError ? exc.message : 'Не удалось изменить сценарий');
+    }
+  };
+
   return (
     <>
       <PageTitle
         title={data?.name ?? 'Сценарий'}
         subtitle={data?.code}
         extra={
-          can('ANALYST') ? (
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={runNow}>
-              Рассчитать сейчас
-            </Button>
-          ) : null
+          <Space wrap>
+            {can('ADMIN') && data ? (
+              <Space size={6}>
+                <Switch size="small" checked={data.is_active} onChange={toggleActive} />
+                <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+                  {data.is_active ? 'на наблюдении' : 'снят с наблюдения'}
+                </span>
+              </Space>
+            ) : null}
+            {can('ANALYST') ? (
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={runNow}>
+                Рассчитать сейчас
+              </Button>
+            ) : null}
+            {can('ADMIN') && data ? (
+              <Button danger onClick={() => setDeleting(true)}>
+                Удалить
+              </Button>
+            ) : null}
+          </Space>
         }
       />
 
       <AsyncBlock loading={scenario.loading} error={scenario.error}>
+        {data && !data.is_active ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Сценарий снят с планового наблюдения"
+            description="Новые данные по нему не собираются. Уже накопленная история сохраняется и остается доступной."
+          />
+        ) : null}
+
         <Row gutter={[16, 16]}>
           <Col xs={24} lg={10}>
             <Card size="small" title="Параметры">
@@ -225,6 +269,12 @@ export default function ScenarioDetailPage() {
           </AsyncBlock>
         </Card>
       </AsyncBlock>
+
+      <ScenarioDeleteModal
+        scenario={deleting ? (data ?? null) : null}
+        onClose={() => setDeleting(false)}
+        onDeleted={() => navigate('/scenarios')}
+      />
     </>
   );
 }

@@ -1,10 +1,12 @@
-import { App, Button, Card, Input, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import { App, Button, Card, Input, Select, Space, Switch, Table, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
 import type { ScenarioBrief } from '@/api/types';
 import { AsyncBlock, PageTitle } from '@/components/common';
+import { ScenarioCreateModal, ScenarioDeleteModal } from '@/components/ScenarioDialogs';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
 import {
@@ -22,6 +24,8 @@ export default function ScenariosPage() {
   const [transport, setTransport] = useState<string>();
   const [scenarioType, setScenarioType] = useState<string>();
   const [activeOnly, setActiveOnly] = useState<boolean | undefined>();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [toDelete, setToDelete] = useState<ScenarioBrief | null>(null);
 
   const cities = useAsync(() => api.cities(), []);
   const query = useMemo(
@@ -51,16 +55,6 @@ export default function ScenariosPage() {
     }
   };
 
-  const remove = async (row: ScenarioBrief) => {
-    try {
-      await api.deleteScenario(row.id);
-      message.success('Сценарий удален (мягко): исторические расчеты сохранены');
-      scenarios.reload();
-    } catch (exc) {
-      message.error(exc instanceof ApiError ? exc.message : 'Не удалось удалить сценарий');
-    }
-  };
-
   const cityOptions = (cities.data?.items ?? []).map((c) => ({ value: c.code, label: c.name }));
 
   return (
@@ -68,6 +62,13 @@ export default function ScenariosPage() {
       <PageTitle
         title="Сценарии наблюдения"
         subtitle="Каждая уникальная комбинация параметров — отдельный сценарий со стабильным отпечатком"
+        extra={
+          can('ADMIN') ? (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              Создать сценарий
+            </Button>
+          ) : null
+        }
       />
 
       <Card size="small" style={{ marginBottom: 16 }}>
@@ -192,22 +193,22 @@ export default function ScenariosPage() {
                       width: 190,
                       render: (_: unknown, row: ScenarioBrief) => (
                         <Space size="small">
-                          <Switch
-                            size="small"
-                            checked={row.is_active}
-                            onChange={() => toggleActive(row)}
-                          />
-                          <Popconfirm
-                            title="Удалить сценарий?"
-                            description="Мягкое удаление: исторические расчеты сохранятся."
-                            okText="Удалить"
-                            cancelText="Отмена"
-                            onConfirm={() => remove(row)}
+                          <Tooltip
+                            title={
+                              row.is_active
+                                ? 'Снять с планового наблюдения'
+                                : 'Поставить на плановое наблюдение'
+                            }
                           >
-                            <Button size="small" danger type="text">
-                              Удалить
-                            </Button>
-                          </Popconfirm>
+                            <Switch
+                              size="small"
+                              checked={row.is_active}
+                              onChange={() => toggleActive(row)}
+                            />
+                          </Tooltip>
+                          <Button size="small" danger type="text" onClick={() => setToDelete(row)}>
+                            Удалить
+                          </Button>
                         </Space>
                       ),
                     },
@@ -217,6 +218,17 @@ export default function ScenariosPage() {
           />
         </AsyncBlock>
       </Card>
+
+      <ScenarioCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => scenarios.reload()}
+      />
+      <ScenarioDeleteModal
+        scenario={toDelete}
+        onClose={() => setToDelete(null)}
+        onDeleted={() => scenarios.reload()}
+      />
     </>
   );
 }

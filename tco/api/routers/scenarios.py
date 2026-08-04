@@ -37,6 +37,11 @@ from tco.core.utils import utcnow
 from tco.db.models.reference import City
 from tco.db.models.scenario import TravelScenario
 from tco.services import audit
+from tco.services.scenario_lifecycle import (
+    purge_scenario,
+    scenario_footprint,
+    soft_delete_scenario,
+)
 from tco.services.scenarios import (
     ScenarioDraft,
     create_scenario,
@@ -324,30 +329,83 @@ def _set_active(
     return scenario_full(scenario)
 
 
-@router.delete("/scenarios/{scenario_id}", summary="Удалить сценарий (мягко)")
-def delete_scenario(
-    scenario_id: str, request: Request, session: SessionDep, principal: AdminDep
-) -> dict[str, Any]:
-    """Мягкое удаление: исторические ScenarioRun остаются неизменными."""
+@router.get("/scenarios/{scenario_id}/footprint", summary="Что накоплено по сценарию")
+def footprint(scenario_id: str, session: SessionDep, _: AdminDep) -> dict[str, Any]:
+    """Объем накопленных данных — показывается перед удалением.
+
+    Решение об уничтожении невосполнимой истории принимается с числами перед
+    глазами, поэтому интерфейс запрашивает их до открытия диалога.
+    """
     scenario = get_or_404(session, TravelScenario, scenario_id, "Сценарий")
+    return {"scenario_code": scenario.code, **scenario_footprint(session, scenario)}
+
+
+@router.delete("/scenarios/{scenario_id}", summary="Удалить сценарий")
+def delete_scenario(
+    scenario_id: str,
+    request: Request,
+    session: SessionDep,
+    principal: AdminDep,
+    purge_data: Annotated[
+        bool,
+        Query(
+            description=(
+                "Уничтожить накопленные снимки рынка, расчеты и предложения. "
+                "По умолчанию удаляется только запись каталога."
+            )
+        ),
+    ] = False,
+) -> dict[str, Any]:
+    """Мягкое удаление либо полное — вместе с историей наблюдений.
+
+    По умолчанию исторические расчеты остаются неизменными: они относятся к
+    прошлому, и их достоверность не зависит от того, наблюдаем ли мы маршрут
+    дальше. ``purge_data`` уничтожает историю безвозвратно — источники не
+    отдают цены задним числом.
+    """
+    scenario = get_or_404(session, TravelScenario, scenario_id, "Сценарий")
+    code = scenario.code
+
+    if purge_data:
+        stats = purge_scenario(session, scenario)
+        audit.record(
+            session,
+            AuditAction.SCENARIO_DELETE,
+            principal=principal,
+            object_type="TravelScenario",
+            object_id=scenario_id,
+            summary=f"Удален сценарий {code} вместе с накопленными данными",
+            payload={"purged": stats},
+            request_id=getattr(request.state, "request_id", None),
+        )
+        session.commit()
+        return {
+            "success": True,
+            "purged": True,
+            "message": f"Сценарий {code} удален вместе с накопленными данными",
+            "removed": stats,
+        }
+
     if scenario.is_deleted:
-        return {"success": True, "message": "Сценарий уже удален"}
+        return {"success": True, "purged": False, "message": "Сценарий уже удален"}
 
-    scenario.deleted_at = utcnow()
-    scenario.is_active = False
-    scenario.updated_at = scenario.deleted_at
-
+    soft_delete_scenario(scenario)
     audit.record(
         session,
         AuditAction.SCENARIO_DELETE,
         principal=principal,
         object_type="TravelScenario",
-        object_id=str(scenario.id),
-        summary=f"Мягко удален сценарий {scenario.code}",
+        object_id=scenario_id,
+        summary=f"Мягко удален сценарий {code}, накопленные данные сохранены",
         request_id=getattr(request.state, "request_id", None),
     )
     session.commit()
-    return {"success": True, "message": f"Сценарий {scenario.code} удален", "deleted_at": scenario.deleted_at.isoformat()}
+    return {
+        "success": True,
+        "purged": False,
+        "message": f"Сценарий {code} удален, накопленные данные сохранены",
+        "deleted_at": scenario.deleted_at.isoformat(),
+    }
 
 
 @router.get("/scenarios/{scenario_id}/export", summary="Выгрузить сценарий в CSV каталога")

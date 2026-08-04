@@ -8,7 +8,7 @@
 import type {
   ApiErrorBody, AuditEvent, City, DashboardOverview, DirectionRow, HealthResponse,
   Job, JobEvent, Offer, Paged, Principal, Profile, RefOption, Run, RunBrief,
-  Scenario, ScenarioBrief, Snapshot, SnapshotBrief, SnapshotSourceRow, Source,
+  Scenario, ScenarioBrief, ScenarioFootprint, Snapshot, SnapshotBrief, SnapshotSourceRow, Source,
   SourceBreakdownRow, SourceConfidence, SourceOverviewRow, Template, TokenResponse,
   VersionInfo,
 } from './types';
@@ -135,7 +135,12 @@ export const api = {
     patch<Scenario>(`/scenarios/${id}`, body),
   activateScenario: (id: string) => post<Scenario>(`/scenarios/${id}/activate`),
   deactivateScenario: (id: string) => post<Scenario>(`/scenarios/${id}/deactivate`),
-  deleteScenario: (id: string) => del<{ success: boolean; message: string }>(`/scenarios/${id}`),
+  scenarioFootprint: (id: string) => get<ScenarioFootprint>(`/scenarios/${id}/footprint`),
+  /** `purgeData` уничтожает накопленные наблюдения безвозвратно. */
+  deleteScenario: (id: string, purgeData = false) =>
+    del<{ success: boolean; purged: boolean; message: string; removed?: ScenarioFootprint }>(
+      `/scenarios/${id}?purge_data=${purgeData}`,
+    ),
 
   // --- Расчеты ---
   createCalculation: (body: { scenario_id?: string; scenario?: unknown; profile_id?: string; force_refresh?: boolean }) =>

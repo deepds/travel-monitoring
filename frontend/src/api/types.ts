@@ -112,6 +112,17 @@ export interface ScenarioBrief {
   is_active: boolean;
 }
 
+/** Объем накопленного по сценарию — показывается перед удалением. */
+export interface ScenarioFootprint {
+  scenario_code?: string;
+  snapshots: number;
+  runs: number;
+  offers: number;
+  raw_responses: number;
+  html_snapshots: number;
+  storage_errors?: number;
+}
+
 export interface Scenario extends ScenarioBrief {
   adults: number;
   children_ages: number[];

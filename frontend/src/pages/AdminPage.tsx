@@ -1,13 +1,15 @@
-import { InboxOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { InboxOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   Alert, App, Button, Card, Checkbox, Col, Descriptions, InputNumber, Row,
   Space, Statistic, Table, Tag, Typography, Upload,
 } from 'antd';
 import type { UploadFile } from 'antd';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
 import { AsyncBlock, PageTitle } from '@/components/common';
+import { ScenarioCreateModal } from '@/components/ScenarioDialogs';
 import { useAsync } from '@/hooks/useAsync';
 import {
   HEALTH_COMPONENT_LABEL, JOB_STATUS_COLOR, JOB_STATUS_LABEL, JOB_TYPE_LABEL,
@@ -24,6 +26,7 @@ export default function AdminPage() {
   const [forceRefresh, setForceRefresh] = useState(false);
   const [limit, setLimit] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const status = useAsync(() => api.monitoringStatus(), []);
   const health = useAsync(() => api.health(), []);
@@ -162,9 +165,23 @@ export default function AdminPage() {
         </Col>
       </Row>
 
-      <Card size="small" title="Импорт каталога сценариев" style={{ marginBottom: 16 }}>
+      <Card
+        size="small"
+        title="Каталог сценариев"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Space>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              Создать сценарий
+            </Button>
+            <Link to="/scenarios">К списку сценариев →</Link>
+          </Space>
+        }
+      >
         <Paragraph type="secondary">
-          Поддерживаются CSV и YAML. Ошибочные строки не срывают импорт целиком — они
+          Сценарий можно завести вручную или загрузить каталог файлом. Активный сценарий
+          попадает в плановый сбор, выключенный сохраняется, но не наблюдается.
+          Поддерживаются CSV и YAML; ошибочные строки не срывают импорт целиком — они
           возвращаются в отчете с номером строки и причиной.
         </Paragraph>
         <Checkbox
@@ -261,6 +278,12 @@ export default function AdminPage() {
           />
         </AsyncBlock>
       </Card>
+
+      <ScenarioCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => status.reload()}
+      />
     </>
   );
 }
