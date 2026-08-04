@@ -268,6 +268,9 @@ def create_snapshot(
         requested_at=requested_at,
         bucket_hours=bucket_hours,
         snapshot_type=snapshot_type.value,
+        # Принудительный сбор обязан дать новый снимок, а не переписать
+        # существующий: без различающей соли ключ совпал бы с уже сохраненным.
+        salt=requested_at.isoformat() if force_refresh else "",
     )
 
     if not force_refresh:

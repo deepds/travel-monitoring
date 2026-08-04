@@ -90,11 +90,16 @@ def snapshot_idempotency_key(
     requested_at: datetime | None,
     bucket_hours: int,
     snapshot_type: str,
+    salt: str = "",
 ) -> str:
     """Ключ идемпотентности снимка.
 
     Повторный запуск в пределах одного временного окна не создает дублирующий
     ``MarketSnapshot`` (DELTA §4.5), если не запрошен ``force_refresh``.
+
+    ``salt`` нужен именно для принудительного сбора: он обязан создать новый
+    снимок, а не переписать существующий. Без соли ключ совпал бы с уже
+    сохраненным, и вставка нарушила бы уникальный индекс.
     """
     moment = requested_at or utcnow()
     bucket = floor_to_bucket(moment, bucket_hours) if bucket_hours > 0 else moment
@@ -103,6 +108,7 @@ def snapshot_idempotency_key(
             "fingerprint": fingerprint,
             "bucket": bucket.isoformat(),
             "snapshot_type": snapshot_type,
+            "salt": salt,
         }
     )
 
