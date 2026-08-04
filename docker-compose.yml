@@ -5,6 +5,21 @@
 #   `--profile tools` — разовые контейнеры migrate/bootstrap.
 #
 # Секреты берутся только из .env (см. .env.example) и в репозиторий не попадают.
+#
+# ХРАНЕНИЕ ДАННЫХ. Накопленные наблюдения невосполнимы: источники не отдают
+# историю цен, поэтому утраченный снимок рынка восстановить неоткуда.
+# Поэтому база, сырые ответы и выгрузки лежат в bind-mount по абсолютному
+# пути ${DATA_ROOT} вне каталога с исходниками. Это защищает от двух типовых
+# способов потерять данные:
+#   * имя named-тома выводится из имени каталога проекта, поэтому
+#     развертывание из другого каталога «теряет» том, хотя он цел;
+#   * пересоздание каталога с исходниками (git clone, распаковка архива)
+#     не должно даже теоретически задевать данные.
+# Redis намеренно оставлен named-томом: это брокер и кэш, его содержимое
+# воспроизводимо.
+#
+# НИКОГДА не выполняйте `docker compose down -v` на рабочем стенде: ключ -v
+# удаляет тома. Безопасное обновление — scripts/deploy.sh.
 
 x-app: &app
   build:
@@ -18,8 +33,8 @@ x-app: &app
     RAW_STORAGE_DIR: /data/raw
     EXPORT_STORAGE_DIR: /data/exports
   volumes:
-    - raw_storage:/data/raw
-    - export_storage:/data/exports
+    - ${DATA_ROOT:-./var/data}/raw:/data/raw
+    - ${DATA_ROOT:-./var/data}/exports:/data/exports
   depends_on:
     postgres: {condition: service_healthy}
     redis: {condition: service_healthy}
@@ -35,7 +50,7 @@ services:
       # Ускоряет initdb и не влияет на корректность: контейнер одноразовый.
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${DATA_ROOT:-./var/data}/pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tco} -d ${POSTGRES_DB:-tco}"]
       interval: 5s
@@ -118,7 +133,5 @@ services:
     profiles: [tools]
 
 volumes:
-  pgdata:
+  # Только брокер: его данные воспроизводимы. Все ценное — в ${DATA_ROOT}.
   redisdata:
-  raw_storage:
-  export_storage:

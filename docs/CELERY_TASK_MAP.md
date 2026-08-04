@@ -33,7 +33,7 @@
 
 | Задача | Расписание | Зачем |
 |---|---|---|
-| `refresh_all_monitoring_scenarios` | `05 */6 * * *` | четыре снимка в сутки (00:05, 06:05, 12:05, 18:05) |
+| `refresh_all_monitoring_scenarios` | `05 * * * *` | ежечасный снимок (24 в сутки) |
 | `health_check_all_sources` | `20 * * * *` | ежечасно |
 | `calculate_source_confidence_all` | `40 2 * * *` | ежедневно ночью |
 | `refresh_source_horizons` | `50 3 * * *` | ежедневно |
