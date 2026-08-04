@@ -98,6 +98,35 @@ def cost_structure(session: SessionDep, _: ViewerDep, filters: FiltersDep) -> di
     return service.cost_structure(session, filters)
 
 
+@router.get("/departure-dates", summary="Цена по датам вылета")
+def departure_dates(session: SessionDep, _: ViewerDep, filters: FiltersDep) -> dict[str, Any]:
+    """Индекс стоимости по датам вылета относительно своего направления.
+
+    Это не кривая бронирования: при одном срезе наблюдения глубина
+    бронирования и дата вылета линейно связаны, и отделить одно от другого
+    нельзя до накопления истории.
+    """
+    return service.departure_dates(session, filters)
+
+
+@router.get("/source-gap", summary="Разрыв цен между источниками")
+def source_gap(session: SessionDep, _: ViewerDep, filters: FiltersDep) -> dict[str, Any]:
+    """Насколько агент дороже перевозчика по одним и тем же поездам."""
+    return service.source_gap(session, filters)
+
+
+@router.get("/price-composition", summary="Надбавки в цене")
+def price_composition(session: SessionDep, _: ViewerDep, filters: FiltersDep) -> dict[str, Any]:
+    """Сколько стоят звезда, багаж и отсутствие пересадки."""
+    return service.price_composition(session, filters)
+
+
+@router.get("/spread", summary="Разброс цен и рейтинг")
+def spread(session: SessionDep, _: ViewerDep, filters: FiltersDep) -> dict[str, Any]:
+    """Где выбор экономит деньги и как это соотносится с рейтингом."""
+    return service.spread(session, filters)
+
+
 @router.get("/changes", summary="Направления с существенными изменениями")
 def changes(
     session: SessionDep,

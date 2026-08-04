@@ -16,8 +16,9 @@ from typing import Any, Iterable, Sequence
 from sqlalchemy import Select, and_, func, select
 from sqlalchemy.orm import Session
 
-from tco.core.enums import RunStatus, RunType, TransportType
+from tco.core.enums import OfferType, RunStatus, RunType, TransportType, ValidityStatus
 from tco.core.utils import round_display, to_decimal, utcnow
+from tco.db.models.offer import AccommodationOffer, FlightOffer, Offer
 from tco.db.models.reference import City
 from tco.db.models.run import ScenarioRun
 from tco.db.models.scenario import TravelScenario
@@ -311,6 +312,359 @@ def directions(
             }
         )
     return rows
+
+
+def _premium(cheap: Sequence[Any], rich: Sequence[Any]) -> dict[str, Any]:
+    """Надбавка одной группы предложений над другой в долях и рублях."""
+    base = median([to_decimal(v) for v in cheap])
+    upgraded = median([to_decimal(v) for v in rich])
+    if not base or not upgraded or base <= 0:
+        return {"base": None, "upgraded": None, "premium": None, "sample": len(cheap) + len(rich)}
+    return {
+        "base": round_display(base, 0),
+        "upgraded": round_display(upgraded, 0),
+        "premium": round(float((upgraded - base) / base), 4),
+        "sample": len(cheap) + len(rich),
+    }
+
+
+def price_composition(
+    session: Session, filters: DashboardFilters | None = None
+) -> dict[str, Any]:
+    """Из чего складывается цена: надбавка за звезду, багаж и прямой рейс.
+
+    Считается по предложениям последних снимков. Сравниваются цены внутри
+    одного снимка, поэтому надбавка не смешивается с разницей направлений.
+    """
+    filters = filters or DashboardFilters()
+    runs = latest_runs(session, filters)
+    snapshot_ids = {run.market_snapshot_id for run in runs if run.market_snapshot_id}
+    empty = {"base": None, "upgraded": None, "premium": None, "sample": 0}
+    if not snapshot_ids:
+        return {"stars": empty, "baggage": empty, "direct": empty, "filters": filters.as_dict()}
+
+    def countable(*extra):
+        return select(*extra).where(
+            Offer.market_snapshot_id.in_(snapshot_ids),
+            Offer.total_price.is_not(None),
+            Offer.validity_status == ValidityStatus.VALID.value,
+            Offer.is_duplicate.is_(False),
+        )
+
+    # Звезда: 3★ против 4★ — на них приходится основная масса наблюдений.
+    stars_rows = session.execute(
+        countable(AccommodationOffer.stars, Offer.total_price)
+        .join(AccommodationOffer, AccommodationOffer.offer_id == Offer.id)
+        .where(AccommodationOffer.stars.in_((3, 4)))
+    ).all()
+    three = [row.total_price for row in stars_rows if row.stars == 3]
+    four = [row.total_price for row in stars_rows if row.stars == 4]
+
+    # Багаж: только ручная кладь против места в багажном отделении.
+    baggage_rows = session.execute(
+        countable(FlightOffer.baggage_type, Offer.total_price)
+        .join(FlightOffer, FlightOffer.offer_id == Offer.id)
+        .where(FlightOffer.baggage_type.in_(("CABIN_ONLY", "CHECKED")))
+    ).all()
+    cabin = [row.total_price for row in baggage_rows if row.baggage_type == "CABIN_ONLY"]
+    checked = [row.total_price for row in baggage_rows if row.baggage_type == "CHECKED"]
+
+    # Прямой рейс: без пересадок против хотя бы одной.
+    stops_rows = session.execute(
+        countable(FlightOffer.outbound_stops, Offer.total_price)
+        .join(FlightOffer, FlightOffer.offer_id == Offer.id)
+        .where(FlightOffer.outbound_stops.is_not(None))
+    ).all()
+    with_stops = [row.total_price for row in stops_rows if (row.outbound_stops or 0) >= 1]
+    direct = [row.total_price for row in stops_rows if (row.outbound_stops or 0) == 0]
+
+    return {
+        "stars": {**_premium(three, four), "from": "3★", "to": "4★"},
+        "baggage": {**_premium(cabin, checked), "from": "Ручная кладь", "to": "С багажом"},
+        # База — рейс с пересадкой: надбавка показывает, сколько стоит ее избежать.
+        "direct": {**_premium(with_stops, direct), "from": "С пересадкой", "to": "Прямой"},
+        "note": "Медианы по предложениям последних снимков выборки.",
+        "filters": filters.as_dict(),
+    }
+
+
+def spread(session: Session, filters: DashboardFilters | None = None) -> dict[str, Any]:
+    """Разброс цен по направлениям и рейтинг размещения.
+
+    Отвечает на вопрос «стоит ли перебирать варианты»: где самое дорогое
+    предложение втрое дороже самого дешевого, выбор экономит реальные деньги.
+    """
+    filters = filters or DashboardFilters()
+    runs = [run for run in latest_runs(session, filters) if run.scenario is not None]
+    snapshot_ids = {run.market_snapshot_id for run in runs if run.market_snapshot_id}
+
+    ratings: dict[Any, list[Any]] = {}
+    if snapshot_ids:
+        rating_rows = session.execute(
+            select(Offer.market_snapshot_id, AccommodationOffer.review_score)
+            .join(AccommodationOffer, AccommodationOffer.offer_id == Offer.id)
+            .where(
+                Offer.market_snapshot_id.in_(snapshot_ids),
+                AccommodationOffer.review_score.is_not(None),
+                Offer.validity_status == ValidityStatus.VALID.value,
+            )
+        ).all()
+        for row in rating_rows:
+            ratings.setdefault(row.market_snapshot_id, []).append(row.review_score)
+
+    grouped: dict[tuple[str, str, str], list[ScenarioRun]] = {}
+    for run in runs:
+        scenario = run.scenario
+        grouped.setdefault(
+            (
+                scenario.origin_city.code,
+                scenario.destination_city.code,
+                scenario.transport_type or "",
+            ),
+            [],
+        ).append(run)
+
+    items: list[dict[str, Any]] = []
+    for (origin, destination, transport), group in sorted(grouped.items()):
+        complete = [run for run in group if run.total_estimated_cost is not None]
+        low = _extremum([run.total_min for run in complete], smallest=True)
+        high = _extremum([run.total_max for run in complete], smallest=False)
+        scores = [
+            score
+            for run in group
+            for score in ratings.get(run.market_snapshot_id, [])
+        ]
+        sample = group[0].scenario
+        items.append(
+            {
+                "origin_city_code": origin,
+                "origin_city_name": sample.origin_city.name,
+                "destination_city_code": destination,
+                "destination_city_name": sample.destination_city.name,
+                "transport_type": transport,
+                "median_total_cost": round_display(_median_total(complete), 0),
+                "min": round_display(low, 0),
+                "max": round_display(high, 0),
+                # Во сколько раз самое дорогое предложение дороже самого дешевого.
+                "spread_ratio": round(high / low, 2) if low and high and low > 0 else None,
+                "review_score": round(float(median([to_decimal(s) for s in scores]) or 0), 2)
+                if scores
+                else None,
+                "review_sample": len(scores),
+            }
+        )
+
+    ratios = [item["spread_ratio"] for item in items if item["spread_ratio"]]
+    items.sort(key=lambda item: item["spread_ratio"] or 0, reverse=True)
+    return {
+        "items": items,
+        "summary": {
+            "median_spread_ratio": round(float(median([to_decimal(r) for r in ratios]) or 0), 2)
+            if ratios
+            else None,
+            "widest": items[0] if items else None,
+        },
+        "note": "Размах — отношение самого дорогого предложения к самому дешевому.",
+        "filters": filters.as_dict(),
+    }
+
+
+def source_gap(
+    session: Session, filters: DashboardFilters | None = None
+) -> dict[str, Any]:
+    """Разрыв цен между источниками по одним и тем же поездам.
+
+    Сравниваются только предложения, попавшие в одну группу эквивалентности:
+    номер поезда, даты и класс вагона совпадают, источник и цена в ключ не
+    входят. Это единственный честный вид сравнения — расхождение медиан
+    источников дополнительно включает разницу составов выдачи.
+    """
+    filters = filters or DashboardFilters()
+    runs = latest_runs(session, filters)
+    snapshot_ids = {run.market_snapshot_id for run in runs if run.market_snapshot_id}
+    if not snapshot_ids:
+        return {"items": [], "summary": _empty_gap_summary(), "filters": filters.as_dict()}
+
+    # Цена берется минимальная по источнику внутри группы: несколько тарифов
+    # одного источника на один поезд иначе попали бы в сравнение произвольно.
+    per_source = (
+        select(
+            Offer.market_snapshot_id.label("snapshot_id"),
+            Offer.equivalence_group_id.label("group_id"),
+            Offer.source_code.label("source_code"),
+            func.min(Offer.total_price).label("price"),
+        )
+        .where(
+            Offer.market_snapshot_id.in_(snapshot_ids),
+            Offer.offer_type == OfferType.RAIL.value,
+            Offer.equivalence_group_id.is_not(None),
+            Offer.total_price.is_not(None),
+            Offer.validity_status == ValidityStatus.VALID.value,
+            Offer.is_duplicate.is_(False),
+        )
+        .group_by(Offer.market_snapshot_id, Offer.equivalence_group_id, Offer.source_code)
+        .subquery()
+    )
+
+    grouped = (
+        select(
+            per_source.c.snapshot_id,
+            per_source.c.group_id,
+            func.count().label("sources"),
+            func.min(per_source.c.price).label("cheapest"),
+            func.max(per_source.c.price).label("dearest"),
+        )
+        .group_by(per_source.c.snapshot_id, per_source.c.group_id)
+        .having(func.count() > 1)
+        .subquery()
+    )
+
+    rows = session.execute(select(grouped)).all()
+    if not rows:
+        return {"items": [], "summary": _empty_gap_summary(), "filters": filters.as_dict()}
+
+    snapshot_to_route: dict[Any, tuple[str, str, str, str, str]] = {}
+    for run in runs:
+        scenario = run.scenario
+        if run.market_snapshot_id and scenario is not None:
+            snapshot_to_route[run.market_snapshot_id] = (
+                scenario.origin_city.code,
+                scenario.origin_city.name,
+                scenario.destination_city.code,
+                scenario.destination_city.name,
+                scenario.transport_type or "",
+            )
+
+    by_route: dict[tuple[str, str, str, str, str], list[float]] = {}
+    all_ratios: list[float] = []
+    for row in rows:
+        cheapest, dearest = to_decimal(row.cheapest), to_decimal(row.dearest)
+        if not cheapest or cheapest <= 0 or dearest is None:
+            continue
+        ratio = float((dearest - cheapest) / cheapest)
+        all_ratios.append(ratio)
+        route = snapshot_to_route.get(row.snapshot_id)
+        if route:
+            by_route.setdefault(route, []).append(ratio)
+
+    items = [
+        {
+            "origin_city_code": origin_code,
+            "origin_city_name": origin_name,
+            "destination_city_code": destination_code,
+            "destination_city_name": destination_name,
+            "transport_type": transport,
+            "matched_trains": len(ratios),
+            "median_gap": round(median([to_decimal(r) for r in ratios]) or 0, 4),
+            "max_gap": round(max(ratios), 4),
+        }
+        for (origin_code, origin_name, destination_code, destination_name, transport), ratios
+        in sorted(by_route.items())
+    ]
+    items.sort(key=lambda item: item["median_gap"], reverse=True)
+
+    return {
+        "items": items,
+        "summary": {
+            "matched_trains": len(all_ratios),
+            "median_gap": round(median([to_decimal(r) for r in all_ratios]) or 0, 4),
+            "max_gap": round(max(all_ratios), 4) if all_ratios else None,
+        },
+        "note": (
+            "Сравниваются одни и те же поезда одного класса. Цена Туту по карте "
+            "мест предкорзинная и ниже итоговой, поэтому реальный разрыв больше."
+        ),
+        "filters": filters.as_dict(),
+    }
+
+
+def _empty_gap_summary() -> dict[str, Any]:
+    return {"matched_trains": 0, "median_gap": None, "max_gap": None}
+
+
+def departure_dates(
+    session: Session, filters: DashboardFilters | None = None
+) -> dict[str, Any]:
+    """Цена по датам вылета — «когда ехать».
+
+    Абсолютные суммы разных направлений несопоставимы, поэтому каждая точка
+    приводится к медиане своего направления: индекс 1.15 означает «на 15 %
+    дороже типичного для этого маршрута».
+
+    Намеренно НЕ называется кривой бронирования. При одном срезе наблюдения
+    глубина бронирования и дата вылета линейно связаны (``lead_time`` =
+    дата вылета минус сегодня), поэтому отделить «дорожает к дате» от
+    «этот месяц дороже» невозможно. Для этого нужна история наблюдений одной
+    и той же даты вылета, и такой виджет появится, когда она накопится.
+    """
+    filters = filters or DashboardFilters()
+    runs = [
+        run
+        for run in latest_runs(session, filters)
+        if run.total_estimated_cost is not None and run.scenario is not None
+    ]
+
+    # Базой служит медиана направления: сравнивать Москву — Сочи с коротким
+    # маршрутом в рублях бессмысленно, а в долях — осмысленно.
+    by_route: dict[tuple[Any, Any, str], list[ScenarioRun]] = {}
+    for run in runs:
+        scenario = run.scenario
+        by_route.setdefault(
+            (scenario.origin_city_id, scenario.destination_city_id, scenario.transport_type),
+            [],
+        ).append(run)
+
+    baselines: dict[tuple[Any, Any, str], float | None] = {
+        key: _median_total(items) for key, items in by_route.items()
+    }
+
+    by_date: dict[date, list[tuple[ScenarioRun, float]]] = {}
+    for key, items in by_route.items():
+        base = baselines.get(key)
+        # Маршрут с единственной датой вылета не несет информации о том, как
+        # цена зависит от даты: его индекс всегда равен единице.
+        if not base or len({run.scenario.departure_date for run in items}) < 2:
+            continue
+        for run in items:
+            cost = to_decimal(run.total_estimated_cost)
+            if cost is None:
+                continue
+            by_date.setdefault(run.scenario.departure_date, []).append((run, float(cost) / base))
+
+    points: list[dict[str, Any]] = []
+    for departure, entries in sorted(by_date.items()):
+        indices = [value for _, value in entries]
+        points.append(
+            {
+                "departure_date": departure.isoformat(),
+                "lead_time_days": int(
+                    median([to_decimal(run.lead_time_days) for run, _ in entries]) or 0
+                ),
+                "price_index": round(median([to_decimal(v) for v in indices]) or 0, 3),
+                "median_total_cost": round_display(_median_total([run for run, _ in entries]), 0),
+                "scenario_count": len(entries),
+                "routes": len({(r.scenario.origin_city_id, r.scenario.destination_city_id) for r, _ in entries}),
+            }
+        )
+
+    cheapest = min(points, key=lambda p: p["price_index"]) if points else None
+    dearest = max(points, key=lambda p: p["price_index"]) if points else None
+
+    return {
+        "points": points,
+        "comparable_routes": sum(
+            1
+            for key, items in by_route.items()
+            if baselines.get(key) and len({r.scenario.departure_date for r in items}) >= 2
+        ),
+        "cheapest": cheapest,
+        "dearest": dearest,
+        "note": (
+            "Индекс — отношение к типичной стоимости своего направления. "
+            "В выборку входят только маршруты, наблюдаемые на нескольких датах вылета."
+        ),
+        "filters": filters.as_dict(),
+    }
 
 
 def trends(
