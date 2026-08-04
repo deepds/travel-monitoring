@@ -143,6 +143,7 @@ python -m tco.cli reset-password admin
 | [Руководство пользователя](docs/USER_GUIDE.md) | дашборд, конструктор, как читать результат |
 | [Квалификация источников](docs/SOURCE_QUALIFICATION.md) | что проверено вживую и с каким решением |
 | [Отчет о приемке](docs/ACCEPTANCE_REPORT.md) | соответствие Definition of Done |
+| [Состояние разработки](docs/PROJECT_STATE.md) | что готово, что проверено вживую, что дальше |
 | [Challenge set](docs/CHALLENGE_SET_RESULTS.md) | результаты контрольных сценариев приемки |
 | [OpenAPI](docs/openapi.json) | машиночитаемый контракт API |
 
