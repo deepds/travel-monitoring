@@ -314,76 +314,116 @@ def directions(
     return rows
 
 
-def _premium(cheap: Sequence[Any], rich: Sequence[Any]) -> dict[str, Any]:
-    """Надбавка одной группы предложений над другой в долях и рублях."""
-    base = median([to_decimal(v) for v in cheap])
-    upgraded = median([to_decimal(v) for v in rich])
-    if not base or not upgraded or base <= 0:
-        return {"base": None, "upgraded": None, "premium": None, "sample": len(cheap) + len(rich)}
+def _paired_premium(
+    rows: Sequence[Any], is_upgraded, *, label_from: str, label_to: str
+) -> dict[str, Any]:
+    """Надбавка, посчитанная парно внутри каждого снимка.
+
+    Сравнивать цены по всей выборке нельзя: 3★ чаще встречаются в коротких
+    дешевых поездках, а рейсы с пересадкой — на длинных маршрутах, и общая
+    медиана измеряла бы состав выборки, а не надбавку. Внутри снимка маршрут,
+    даты, число ночей и состав туристов одинаковы, поэтому отношение цен
+    в нем осмысленно; итог — медиана таких отношений.
+    """
+    by_snapshot: dict[Any, tuple[list[Any], list[Any]]] = {}
+    for row in rows:
+        base, upgraded = by_snapshot.setdefault(row.market_snapshot_id, ([], []))
+        (upgraded if is_upgraded(row) else base).append(row.total_price)
+
+    ratios: list[float] = []
+    base_values: list[Any] = []
+    upgraded_values: list[Any] = []
+    for base, upgraded in by_snapshot.values():
+        base_median = median([to_decimal(v) for v in base])
+        upgraded_median = median([to_decimal(v) for v in upgraded])
+        if not base_median or not upgraded_median or base_median <= 0:
+            continue
+        ratios.append(float((upgraded_median - base_median) / base_median))
+        base_values.append(base_median)
+        upgraded_values.append(upgraded_median)
+
+    if not ratios:
+        return {
+            "from": label_from,
+            "to": label_to,
+            "premium": None,
+            "base": None,
+            "upgraded": None,
+            "snapshots": 0,
+        }
     return {
-        "base": round_display(base, 0),
-        "upgraded": round_display(upgraded, 0),
-        "premium": round(float((upgraded - base) / base), 4),
-        "sample": len(cheap) + len(rich),
+        "from": label_from,
+        "to": label_to,
+        "premium": round(float(median([to_decimal(r) for r in ratios]) or 0), 4),
+        "base": round_display(median([to_decimal(v) for v in base_values]), 0),
+        "upgraded": round_display(median([to_decimal(v) for v in upgraded_values]), 0),
+        # Сколько снимков дали обе группы сразу — на стольких парах и считалось.
+        "snapshots": len(ratios),
     }
 
 
 def price_composition(
     session: Session, filters: DashboardFilters | None = None
 ) -> dict[str, Any]:
-    """Из чего складывается цена: надбавка за звезду, багаж и прямой рейс.
-
-    Считается по предложениям последних снимков. Сравниваются цены внутри
-    одного снимка, поэтому надбавка не смешивается с разницей направлений.
-    """
+    """Из чего складывается цена: надбавка за звезду, багаж и прямой рейс."""
     filters = filters or DashboardFilters()
     runs = latest_runs(session, filters)
     snapshot_ids = {run.market_snapshot_id for run in runs if run.market_snapshot_id}
-    empty = {"base": None, "upgraded": None, "premium": None, "sample": 0}
+    empty = {"premium": None, "base": None, "upgraded": None, "snapshots": 0}
     if not snapshot_ids:
-        return {"stars": empty, "baggage": empty, "direct": empty, "filters": filters.as_dict()}
+        return {
+            "stars": {**empty, "from": "3★", "to": "4★"},
+            "baggage": {**empty, "from": "Ручная кладь", "to": "С багажом"},
+            "direct": {**empty, "from": "С пересадкой", "to": "Прямой"},
+            "filters": filters.as_dict(),
+        }
 
     def countable(*extra):
-        return select(*extra).where(
+        return select(Offer.market_snapshot_id, Offer.total_price, *extra).where(
             Offer.market_snapshot_id.in_(snapshot_ids),
             Offer.total_price.is_not(None),
             Offer.validity_status == ValidityStatus.VALID.value,
             Offer.is_duplicate.is_(False),
+            Offer.is_outlier.is_(False),
         )
 
-    # Звезда: 3★ против 4★ — на них приходится основная масса наблюдений.
     stars_rows = session.execute(
-        countable(AccommodationOffer.stars, Offer.total_price)
+        countable(AccommodationOffer.stars)
         .join(AccommodationOffer, AccommodationOffer.offer_id == Offer.id)
         .where(AccommodationOffer.stars.in_((3, 4)))
     ).all()
-    three = [row.total_price for row in stars_rows if row.stars == 3]
-    four = [row.total_price for row in stars_rows if row.stars == 4]
-
-    # Багаж: только ручная кладь против места в багажном отделении.
     baggage_rows = session.execute(
-        countable(FlightOffer.baggage_type, Offer.total_price)
+        countable(FlightOffer.baggage_type)
         .join(FlightOffer, FlightOffer.offer_id == Offer.id)
         .where(FlightOffer.baggage_type.in_(("CABIN_ONLY", "CHECKED")))
     ).all()
-    cabin = [row.total_price for row in baggage_rows if row.baggage_type == "CABIN_ONLY"]
-    checked = [row.total_price for row in baggage_rows if row.baggage_type == "CHECKED"]
-
-    # Прямой рейс: без пересадок против хотя бы одной.
     stops_rows = session.execute(
-        countable(FlightOffer.outbound_stops, Offer.total_price)
+        countable(FlightOffer.outbound_stops)
         .join(FlightOffer, FlightOffer.offer_id == Offer.id)
         .where(FlightOffer.outbound_stops.is_not(None))
     ).all()
-    with_stops = [row.total_price for row in stops_rows if (row.outbound_stops or 0) >= 1]
-    direct = [row.total_price for row in stops_rows if (row.outbound_stops or 0) == 0]
 
     return {
-        "stars": {**_premium(three, four), "from": "3★", "to": "4★"},
-        "baggage": {**_premium(cabin, checked), "from": "Ручная кладь", "to": "С багажом"},
+        "stars": _paired_premium(
+            stars_rows, lambda r: r.stars == 4, label_from="3★", label_to="4★"
+        ),
+        "baggage": _paired_premium(
+            baggage_rows,
+            lambda r: r.baggage_type == "CHECKED",
+            label_from="Ручная кладь",
+            label_to="С багажом",
+        ),
         # База — рейс с пересадкой: надбавка показывает, сколько стоит ее избежать.
-        "direct": {**_premium(with_stops, direct), "from": "С пересадкой", "to": "Прямой"},
-        "note": "Медианы по предложениям последних снимков выборки.",
+        "direct": _paired_premium(
+            stops_rows,
+            lambda r: (r.outbound_stops or 0) == 0,
+            label_from="С пересадкой",
+            label_to="Прямой",
+        ),
+        "note": (
+            "Надбавка считается парно внутри каждого снимка — маршрут, даты и "
+            "состав туристов там одинаковы, поэтому состав выборки на нее не влияет."
+        ),
         "filters": filters.as_dict(),
     }
 
@@ -429,6 +469,11 @@ def spread(session: Session, filters: DashboardFilters | None = None) -> dict[st
         complete = [run for run in group if run.total_estimated_cost is not None]
         low = _extremum([run.total_min for run in complete], smallest=True)
         high = _extremum([run.total_max for run in complete], smallest=False)
+        # Размах min–max — фактические границы выборки, они чувствительны к
+        # единственному дорогому варианту. Отношение P75 к P25 устойчиво и
+        # ближе отвечает на вопрос «сколько даст обычный перебор вариантов».
+        p25 = median([to_decimal(run.total_p25) for run in complete if run.total_p25])
+        p75 = median([to_decimal(run.total_p75) for run in complete if run.total_p75])
         scores = [
             score
             for run in group
@@ -445,8 +490,12 @@ def spread(session: Session, filters: DashboardFilters | None = None) -> dict[st
                 "median_total_cost": round_display(_median_total(complete), 0),
                 "min": round_display(low, 0),
                 "max": round_display(high, 0),
+                "p25": round_display(p25, 0),
+                "p75": round_display(p75, 0),
                 # Во сколько раз самое дорогое предложение дороже самого дешевого.
                 "spread_ratio": round(high / low, 2) if low and high and low > 0 else None,
+                # Устойчивая мера: во сколько раз дорогая четверть дороже дешевой.
+                "iqr_ratio": round(float(p75 / p25), 2) if p25 and p75 and p25 > 0 else None,
                 "review_score": round(float(median([to_decimal(s) for s in scores]) or 0), 2)
                 if scores
                 else None,
@@ -455,16 +504,24 @@ def spread(session: Session, filters: DashboardFilters | None = None) -> dict[st
         )
 
     ratios = [item["spread_ratio"] for item in items if item["spread_ratio"]]
-    items.sort(key=lambda item: item["spread_ratio"] or 0, reverse=True)
+    iqr_ratios = [item["iqr_ratio"] for item in items if item["iqr_ratio"]]
+    items.sort(key=lambda item: item["iqr_ratio"] or 0, reverse=True)
     return {
         "items": items,
         "summary": {
             "median_spread_ratio": round(float(median([to_decimal(r) for r in ratios]) or 0), 2)
             if ratios
             else None,
+            "median_iqr_ratio": round(float(median([to_decimal(r) for r in iqr_ratios]) or 0), 2)
+            if iqr_ratios
+            else None,
             "widest": items[0] if items else None,
         },
-        "note": "Размах — отношение самого дорогого предложения к самому дешевому.",
+        "note": (
+            "P25–P75 — устойчивая мера: во сколько раз дорогая четверть предложений "
+            "дороже дешевой. Размах min–max показывает фактические границы выборки "
+            "и чувствителен к единственному дорогому варианту."
+        ),
         "filters": filters.as_dict(),
     }
 
