@@ -16,10 +16,12 @@ from __future__ import annotations
 import re
 import time
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from tco.core.enums import ConnectorOutcome, OfferType, SourceCategory
-from tco.core.errors import ConnectorSchemaError
+from tco.core.errors import ConnectorError, ConnectorSchemaError
+from tco.core.logging import get_logger
 from tco.core.utils import normalize_text, parse_date, parse_datetime, to_decimal
 from tco.connectors.base import BaseConnector
 from tco.connectors.contracts import (
@@ -33,6 +35,13 @@ from tco.connectors.contracts import (
 )
 from tco.connectors.http import ResilientHttpClient
 from tco.connectors.mcp_client import McpClient
+
+logger = get_logger(__name__)
+
+#: Верхняя граница ``max_cars`` карты мест — жестко задана сервером Туту.
+_SEATMAP_MAX_CARS = 20
+#: Сколько поездов детализируется за один сбор (оба направления вместе).
+_SEATMAP_DEFAULT_CALLS = 16
 
 #: Кандидаты имен аргументов для каждого логического поля.
 ARG_ALIASES: dict[str, tuple[str, ...]] = {
@@ -288,12 +297,19 @@ class TutuMcpConnector(BaseConnector):
     TOOL_AVIA = "search_avia"
     TOOL_RAIL = "search_rail"
     TOOL_HOTELS = "search_hotels"
+    #: Карта мест — единственный источник цены по типу вагона.
+    #: Поиск отдает только «цену от» по всем классам сразу, а ``get_offer_details``
+    #: обрезает список тарифов двадцатью строками, и на поезде с большим числом
+    #: плацкартных тарифов купе в него не попадает.
+    TOOL_RAIL_SEATMAP = "get_rail_seatmap"
 
     def __init__(self, context) -> None:  # noqa: ANN001
         super().__init__(context)
         self.endpoint = str(context.config.get("endpoint") or "https://mcp.tutu.ru/mcp")
         self._tool_schemas: dict[str, dict[str, Any]] = {}
         self._geo_index: dict[str, Any] | None = None
+        #: Остаток бюджета вызовов карты мест на текущий сбор.
+        self._seatmap_budget = 0
 
     # ------------------------------------------------------------------ #
     # Инфраструктура
@@ -411,6 +427,14 @@ class TutuMcpConnector(BaseConnector):
         tool = self.TOOL_AVIA if is_avia else self.TOOL_RAIL
         offer_type = OfferType.FLIGHT if is_avia else OfferType.RAIL
 
+        # Карта мест запрашивается отдельным вызовом на каждый поезд, поэтому
+        # бюджет ограничен и общий на оба направления поездки.
+        self._seatmap_budget = (
+            0
+            if is_avia
+            else int(self.context.config.get("rail_seatmap_calls", _SEATMAP_DEFAULT_CALLS))
+        )
+
         started = time.perf_counter()
         with self._http() as http:
             mcp = McpClient(http, self.endpoint, client_name="travel-cost-observatory")
@@ -481,7 +505,9 @@ class TutuMcpConnector(BaseConnector):
                         content_type="application/json",
                     )
                 )
-                offers = self._parse_transport(payload, query, offer_type, round_trip=True)
+                offers = self._parse_transport(
+                    payload, query, offer_type, round_trip=True, mcp=mcp
+                )
             else:
                 # Инструмент не принимает обратную дату — собираем round-trip
                 # из двух односторонних поисков.
@@ -512,7 +538,7 @@ class TutuMcpConnector(BaseConnector):
                     ]
                 )
                 offers = self._combine_one_way(
-                    outbound_payload, inbound_payload, query, offer_type
+                    outbound_payload, inbound_payload, query, offer_type, mcp=mcp
                 )
 
             return ConnectorResult(
@@ -526,6 +552,41 @@ class TutuMcpConnector(BaseConnector):
                 diagnostics={"tool": tool, "mapped_args": sorted(args)},
             )
 
+    def _rail_class_prices(self, mcp: McpClient, offer: dict[str, Any]) -> dict[str, Decimal]:
+        """Цена за место по каждому типу вагона поезда.
+
+        Возвращает пустой словарь, если карта мест недоступна: перевозчик может
+        ее не отдавать (``no_layout_for_carrier``), и это не ошибка сбора.
+
+        Цены карты мест — предкорзинные: Туту предупреждает, что финальная
+        корзина выше на 6–8 % за счет его сервисного сбора. Здесь они берутся
+        как есть, без домножения на коэффициент: подгонять чужую цену
+        собственной поправкой значило бы выдавать оценку за наблюдение.
+        """
+        details_ref = offer.get("details_ref")
+        if not isinstance(details_ref, dict) or self._seatmap_budget <= 0:
+            return {}
+        if self.TOOL_RAIL_SEATMAP not in self._tool_schemas:
+            return {}
+
+        self._seatmap_budget -= 1
+        try:
+            payload = mcp.call_tool(
+                self.TOOL_RAIL_SEATMAP,
+                {
+                    "details_ref": details_ref,
+                    "view": "compact",
+                    "max_cars": _SEATMAP_MAX_CARS,
+                    # Сами места не нужны — нужны только группы с ценами.
+                    "max_seats_per_car": 1,
+                },
+            )
+        except ConnectorError as exc:
+            logger.debug("Карта мест недоступна", source=self.code, error=str(exc))
+            return {}
+
+        return _seatmap_class_prices(payload)
+
     def _parse_transport(
         self,
         payload: Any,
@@ -533,6 +594,7 @@ class TutuMcpConnector(BaseConnector):
         offer_type: OfferType,
         *,
         round_trip: bool,
+        mcp: McpClient | None = None,
     ) -> list[Any]:
         """Разбирает выдачу поиска транспорта.
 
@@ -591,33 +653,60 @@ class TutuMcpConnector(BaseConnector):
                         )
                     )
             else:
-                offers.append(
-                    ProviderRailOffer(
-                        source_offer_id=offer_id,
-                        currency=currency,
-                        total_price=base_price,
-                        price_basis="PER_PASSENGER",
-                        price_per_place_outbound=base_price,
-                        outbound_segments=outbound,
-                        inbound_segments=inbound,
-                        outbound_train_number=outbound[0].vehicle_number if outbound else None,
-                        inbound_train_number=inbound[0].vehicle_number if inbound else None,
-                        origin_station_name=outbound[0].origin_name if outbound else None,
-                        destination_station_name=outbound[-1].destination_name
-                        if outbound
-                        else None,
-                        origin_city_name=query.origin_city_name,
-                        destination_city_name=query.destination_city_name,
-                        outbound_duration_minutes=_leg_duration(outbound_raw),
-                        inbound_duration_minutes=_leg_duration(inbound_raw),
-                        carriers=[str(c) for c in (offer.get("carriers") or []) if c],
-                        car_type_raw=_rail_car_type(offer, variants),
-                        deeplink=deeplink,
-                        passenger_count=query.traveler_count,
-                        is_round_trip=round_trip and bool(inbound),
-                        source_payload={"transport": offer.get("transport")},
-                    )
+                # Поиск отдает одну строку на поезд с «ценой от» по всем классам
+                # сразу. Для сопоставления с РЖД нужна цена конкретного типа
+                # вагона, поэтому поезд разворачивается в предложение на класс.
+                class_prices = self._rail_class_prices(mcp, offer) if mcp is not None else {}
+                fallback_type = _rail_car_type(offer, variants)
+                priced: list[tuple[str | None, Decimal | None, str]] = (
+                    [(car_type, price, "seatmap") for car_type, price in class_prices.items()]
+                    if class_prices
+                    # Без карты мест остается прежнее поведение: одна строка на
+                    # поезд. Класс не определен, поэтому нормализация пометит ее
+                    # как неклассифицированную, а не подставит чужой.
+                    else [(fallback_type, base_price, "search")]
                 )
+
+                common = dict(
+                    currency=currency,
+                    price_basis="PER_PASSENGER",
+                    outbound_segments=outbound,
+                    inbound_segments=inbound,
+                    outbound_train_number=outbound[0].vehicle_number if outbound else None,
+                    inbound_train_number=inbound[0].vehicle_number if inbound else None,
+                    origin_station_name=outbound[0].origin_name if outbound else None,
+                    destination_station_name=outbound[-1].destination_name if outbound else None,
+                    origin_city_name=query.origin_city_name,
+                    destination_city_name=query.destination_city_name,
+                    outbound_duration_minutes=_leg_duration(outbound_raw),
+                    inbound_duration_minutes=_leg_duration(inbound_raw),
+                    carriers=[str(c) for c in (offer.get("carriers") or []) if c],
+                    deeplink=deeplink,
+                    passenger_count=query.traveler_count,
+                    is_round_trip=round_trip and bool(inbound),
+                )
+
+                for car_type, price, origin_of_price in priced:
+                    offers.append(
+                        ProviderRailOffer(
+                            source_offer_id=(
+                                f"{offer_id}:{car_type}" if car_type else offer_id
+                            ),
+                            total_price=price,
+                            price_per_place_outbound=price,
+                            car_type_raw=car_type,
+                            source_payload={
+                                "transport": offer.get("transport"),
+                                # Провенанс цены: по карте мест она предкорзинная
+                                # и ниже финальной корзины на 6–8 %.
+                                "price_source": origin_of_price,
+                                "search_price_from": float(base_price)
+                                if base_price is not None
+                                else None,
+                            },
+                            **common,
+                        )
+                    )
         return offers
 
     def _combine_one_way(
@@ -626,20 +715,25 @@ class TutuMcpConnector(BaseConnector):
         inbound_payload: Any,
         query,  # noqa: ANN001
         offer_type: OfferType,
+        mcp: McpClient | None = None,
     ) -> list[Any]:
         """Собирает round-trip из двух односторонних выдач.
 
         Комбинируются только сопоставимые варианты (для ЖД — одного типа
         вагона), число комбинаций ограничено, чтобы не раздувать выборку.
         """
-        outbound = self._parse_transport(outbound_payload, query, offer_type, round_trip=False)
-        inbound = self._parse_transport(inbound_payload, query, offer_type, round_trip=False)
+        outbound = self._parse_transport(
+            outbound_payload, query, offer_type, round_trip=False, mcp=mcp
+        )
+        inbound = self._parse_transport(
+            inbound_payload, query, offer_type, round_trip=False, mcp=mcp
+        )
         if not outbound or not inbound:
             return []
 
         limit = int(self.context.config.get("roundtrip_legs_per_direction", 8))
-        outbound = sorted(outbound, key=lambda o: o.total_price or 0)[:limit]
-        inbound = sorted(inbound, key=lambda o: o.total_price or 0)[:limit]
+        outbound = _cheapest_per_class(outbound, offer_type, limit)
+        inbound = _cheapest_per_class(inbound, offer_type, limit)
 
         combined: list[Any] = []
         for out in outbound:
@@ -976,6 +1070,65 @@ def _cancellation_text(best: dict[str, Any]) -> str | None:
         if isinstance(item, dict) and item.get("type") == "policies":
             return _first_str(item, "text")
     return None
+
+
+def _seatmap_class_prices(payload: Any) -> dict[str, Decimal]:
+    """Минимальная цена за место по каждому типу вагона из карты мест.
+
+    Тип вагона Туту отдает уже нормализованным (``RESERVED_SEAT``,
+    ``COMPARTMENT``, ``LUX``, …), поэтому сопоставление кодов класса
+    обслуживания (``3Б``, ``2К``) здесь не требуется: по первому символу его
+    все равно нельзя вывести — ``2В`` и ``2С`` это сидячие, а не купе.
+    """
+    node = payload
+    if isinstance(node, list) and node:
+        node = node[0]
+    if isinstance(node, dict) and isinstance(node.get("body"), dict):
+        node = node["body"]
+    if not isinstance(node, dict):
+        return {}
+    if node.get("seatmap_status") not in (None, "ok"):
+        return {}
+
+    prices: dict[str, Decimal] = {}
+    for car in node.get("cars") or []:
+        if not isinstance(car, dict):
+            continue
+        car_type = car.get("car_type")
+        if not car_type:
+            continue
+        for group in car.get("seat_groups") or []:
+            if not isinstance(group, dict):
+                continue
+            fare = group.get("cheapest_fare")
+            if not isinstance(fare, dict):
+                continue
+            price = to_decimal(_get_path(fare, "price", "amount"))
+            if price is None:
+                continue
+            current = prices.get(str(car_type))
+            if current is None or price < current:
+                prices[str(car_type)] = price
+    return prices
+
+
+def _cheapest_per_class(offers: list[Any], offer_type: OfferType, limit: int) -> list[Any]:
+    """Оставляет самые дешевые предложения, но по каждому классу отдельно.
+
+    Общий лимит на направление вытеснил бы купе плацкартом: плацкарт всегда
+    дешевле, и в отсечку по цене попадали бы только его варианты.
+    """
+    if offer_type != OfferType.RAIL:
+        return sorted(offers, key=lambda o: o.total_price or 0)[:limit]
+
+    by_class: dict[str | None, list[Any]] = {}
+    for item in offers:
+        by_class.setdefault(item.car_type_raw, []).append(item)
+
+    kept: list[Any] = []
+    for group in by_class.values():
+        kept.extend(sorted(group, key=lambda o: o.total_price or 0)[:limit])
+    return kept
 
 
 def _rail_car_type(offer: dict[str, Any], variants: list[dict[str, Any]]) -> str | None:
