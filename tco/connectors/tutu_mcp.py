@@ -86,8 +86,11 @@ ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "city": ("city_name", "city", "city_id", "geo_id", "region_id", "location", "where", "place"),
     "check_in": ("check_in", "checkin", "date_from", "arrival_date", "from_date"),
     "check_out": ("check_out", "checkout", "date_to", "departure_date", "to_date"),
-    "stars_min": ("stars_min", "min_stars", "stars_from"),
+    "stars": ("stars", "stars_min", "min_stars", "stars_from"),
     "stars_max": ("stars_max", "max_stars", "stars_to"),
+    "meals": ("meals", "meal_type", "board"),
+    "breakfast_included": ("breakfast_included", "with_breakfast"),
+    "free_cancellation": ("free_cancellation", "refundable_only"),
     "per_page": ("per_page", "limit", "page_size", "count"),
     "page": ("page", "page_number", "offset"),
 }
@@ -657,10 +660,16 @@ class TutuMcpConnector(BaseConnector):
             self._set_arg(args, props, "adults", query.adults)
             if query.children_ages:
                 self._set_arg(args, props, "children_ages", list(query.children_ages))
+            # Фильтры отдаются источнику, а не применяются только локально:
+            # иначе выдача из 30 объектов почти целиком отсеивается профилем,
+            # и выборка для агрегации становится непригодно малой.
             stars_value = _stars_numeric(query.stars)
             if stars_value is not None:
-                self._set_arg(args, props, "stars_min", stars_value)
-                self._set_arg(args, props, "stars_max", stars_value)
+                self._set_arg(args, props, "stars", str(stars_value))
+            if query.meal_type == "BREAKFAST":
+                self._set_arg(args, props, "breakfast_included", True)
+            if query.cancellation_filter == "FREE_CANCELLATION":
+                self._set_arg(args, props, "free_cancellation", True)
             self._set_arg(args, props, "per_page", int(self.context.config.get("per_page", 50)))
 
             payload = mcp.call_tool(self.TOOL_HOTELS, args)
@@ -735,7 +744,7 @@ class TutuMcpConnector(BaseConnector):
                     # Поиск выполнялся по составу гостей, поэтому выдача
                     # подтверждает вместимость.
                     capacity_confirmed_by_query=True,
-                    meal_raw=_meal_text(best),
+                    meal_raw=_meal_text(best, query.meal_type),
                     cancellation_raw=_cancellation_text(best),
                     review_score=_as_float(hotel.get("rating")),
                     review_count=_as_int(hotel.get("review_count")),
@@ -810,17 +819,31 @@ def _split_place(value: Any) -> tuple[str | None, str | None]:
     return value.strip(), None
 
 
+#: Метки обратного плеча. Источник использует «return», а не «inbound»,
+#: поэтому распознавание по одному лишь префиксу «in» теряло все обратные
+#: сегменты и делало каждое круговое предложение несопоставимым со сценарием.
+_INBOUND_LABELS = frozenset({"inbound", "return", "back", "backward", "homeward"})
+
+
 def _split_legs(offer: dict[str, Any]) -> tuple[list[dict], list[dict]]:
-    """Делит сегменты на плечи «туда» и «обратно» по метке ``label``."""
+    """Делит сегменты на плечи «туда» и «обратно».
+
+    Первично используется метка ``label``; если она незнакома, работает
+    позиционное правило: первое плечо — «туда», последующие — «обратно».
+    """
     legs = [leg for leg in (offer.get("legs") or []) if isinstance(leg, dict)]
     outbound: list[dict] = []
     inbound: list[dict] = []
     for index, leg in enumerate(legs):
-        label = str(leg.get("label") or ("outbound" if index == 0 else "inbound")).lower()
+        label = str(leg.get("label") or "").strip().lower()
+        if label in _INBOUND_LABELS:
+            is_inbound = True
+        elif label:
+            is_inbound = False
+        else:
+            is_inbound = index > 0
         segments = [s for s in (leg.get("segments") or []) if isinstance(s, dict)] or [leg]
-        (inbound if label.startswith("in") or label.startswith("back") else outbound).extend(
-            segments
-        )
+        (inbound if is_inbound else outbound).extend(segments)
     return outbound, inbound
 
 
@@ -884,7 +907,14 @@ def _refund_text(conditions: dict[str, Any]) -> str | None:
     return "Возвратный" if conditions.get("refundable") else "Невозвратный"
 
 
-def _meal_text(best: dict[str, Any]) -> str | None:
+def _meal_text(best: dict[str, Any], requested_meal: str | None = None) -> str | None:
+    """Определяет питание предложения.
+
+    Если поиск выполнялся с серверным фильтром по завтраку, выдача его и
+    подтверждает — так же, как поиск по составу гостей подтверждает
+    вместимость. Без этого источник, не заполняющий ``meal_name``, давал бы
+    сплошной ``UNKNOWN`` и предложения отсеивались бы фильтром профиля.
+    """
     name = _first_str(best, "meal_name", "board_name")
     if name:
         return name
@@ -893,6 +923,8 @@ def _meal_text(best: dict[str, Any]) -> str | None:
         return "Завтрак"
     if included is False:
         return "Без питания"
+    if requested_meal == "BREAKFAST":
+        return "Завтрак"
     return None
 
 
