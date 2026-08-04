@@ -6,7 +6,7 @@ import { api } from '@/api/client';
 import type { SnapshotBrief } from '@/api/types';
 import { AsyncBlock, PageTitle, SyntheticTag } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
-import { dateTime, num } from '@/utils/format';
+import { SNAPSHOT_STATUS_LABEL, SNAPSHOT_TYPE_LABEL, dateTime, labelOf, num } from '@/utils/format';
 
 const STATUS_COLOR: Record<string, string> = {
   COLLECTING: 'processing',
@@ -32,13 +32,16 @@ export default function SnapshotsPage() {
     <>
       <PageTitle
         title="Снимки рынка"
-        subtitle="MarketSnapshot фиксирует состояние рынка до применения расчетной методики и неизменяем после завершения"
+        subtitle="Снимок фиксирует состояние рынка до применения расчетной методики и неизменяем после завершения"
       />
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Select allowClear placeholder="Статус" style={{ width: 170 }}
-            options={Object.keys(STATUS_COLOR).map((v) => ({ value: v, label: v }))}
+            options={Object.keys(STATUS_COLOR).map((v) => ({
+              value: v,
+              label: labelOf(SNAPSHOT_STATUS_LABEL, v),
+            }))}
             value={status} onChange={(v) => { setStatus(v); setPage(1); }} />
           <Select allowClear placeholder="Тип снимка" style={{ width: 210 }}
             options={[
@@ -92,11 +95,17 @@ export default function SnapshotsPage() {
                   </span>
                 ),
               },
-              { title: 'Тип', dataIndex: 'snapshot_type', render: (v: string) => <Tag>{v}</Tag> },
+              {
+                title: 'Тип',
+                dataIndex: 'snapshot_type',
+                render: (v: string) => <Tag>{labelOf(SNAPSHOT_TYPE_LABEL, v)}</Tag>,
+              },
               {
                 title: 'Статус',
                 dataIndex: 'status',
-                render: (value: string) => <Tag color={STATUS_COLOR[value]}>{value}</Tag>,
+                render: (value: string) => (
+                  <Tag color={STATUS_COLOR[value]}>{labelOf(SNAPSHOT_STATUS_LABEL, value)}</Tag>
+                ),
               },
               {
                 title: 'Транспорт',

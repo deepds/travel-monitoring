@@ -6,7 +6,7 @@ import type { Profile } from '@/api/types';
 import { AsyncBlock, PageTitle } from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
-import { dateTime } from '@/utils/format';
+import { PROFILE_STATUS_LABEL, dateTime, labelOf } from '@/utils/format';
 
 const { Text } = Typography;
 
@@ -47,7 +47,7 @@ export default function ProfilesPage() {
     <>
       <PageTitle
         title="Профили расчета"
-        subtitle="Версионируемая методика: DRAFT → ACTIVE → ARCHIVED"
+        subtitle="Версионируемая методика: черновик → активный → в архиве"
       />
 
       <Alert
@@ -84,7 +84,9 @@ export default function ProfilesPage() {
               {
                 title: 'Статус',
                 dataIndex: 'status',
-                render: (value: string) => <Tag color={STATUS_COLOR[value]}>{value}</Tag>,
+                render: (value: string) => (
+                  <Tag color={STATUS_COLOR[value]}>{labelOf(PROFILE_STATUS_LABEL, value)}</Tag>
+                ),
               },
               { title: 'Версия', dataIndex: 'version' },
               {

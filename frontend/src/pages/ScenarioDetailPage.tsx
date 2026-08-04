@@ -5,12 +5,17 @@ import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
-import { AsyncBlock, ConfidenceTag, PageTitle, RunStatusTag, SyntheticTag } from '@/components/common';
+import {
+  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
+} from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
 import {
-  ACCOMMODATION_LABEL, TRANSPORT_LABEL, dateOnly, dateTime, money, score, starsLabel,
+  ACCOMMODATION_LABEL, CANCELLATION_LABEL, FARE_TYPE_LABEL, MEAL_LABEL, RAIL_CLASS_LABEL,
+  RUN_TYPE_LABEL, SCENARIO_TYPE_LABEL, TRANSPORT_LABEL, dateOnly, dateTime, labelOf, money,
+  score, starsLabel,
 } from '@/utils/format';
+import { QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
 
 export default function ScenarioDetailPage() {
   const { id = '' } = useParams();
@@ -105,18 +110,23 @@ export default function ScenarioDetailPage() {
                 </Descriptions.Item>
                 <Descriptions.Item label="Транспорт">
                   <Tag>{TRANSPORT_LABEL[data?.transport_type ?? ''] ?? data?.transport_type}</Tag>
-                  {data?.flight_fare_type ? <Tag>{data.flight_fare_type}</Tag> : null}
-                  {data?.rail_class ? <Tag>{data.rail_class}</Tag> : null}
+                  {data?.flight_fare_type ? (
+                    <Tag>{labelOf(FARE_TYPE_LABEL, data.flight_fare_type)}</Tag>
+                  ) : null}
+                  {data?.rail_class ? (
+                    <Tag>{labelOf(RAIL_CLASS_LABEL, data.rail_class)}</Tag>
+                  ) : null}
                 </Descriptions.Item>
                 <Descriptions.Item label="Размещение">
                   {ACCOMMODATION_LABEL[data?.accommodation_type ?? ''] ?? data?.accommodation_type} ·{' '}
                   {starsLabel(data?.stars)}
                 </Descriptions.Item>
                 <Descriptions.Item label="Питание / отмена">
-                  {data?.meal_type} · {data?.cancellation_filter}
+                  {labelOf(MEAL_LABEL, data?.meal_type)} ·{' '}
+                  {labelOf(CANCELLATION_LABEL, data?.cancellation_filter)}
                 </Descriptions.Item>
                 <Descriptions.Item label="Режим">
-                  <Tag>{data?.scenario_type}</Tag>
+                  <Tag>{labelOf(SCENARIO_TYPE_LABEL, data?.scenario_type)}</Tag>
                   {data?.is_active ? <Tag color="success">активен</Tag> : <Tag>выключен</Tag>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Период активности">
@@ -166,7 +176,11 @@ export default function ScenarioDetailPage() {
                   ),
                 },
                 { title: 'Запуск', dataIndex: 'started_at', render: (v: string) => dateTime(v) },
-                { title: 'Тип', dataIndex: 'run_type', render: (v: string) => <Tag>{v}</Tag> },
+                {
+                  title: 'Тип',
+                  dataIndex: 'run_type',
+                  render: (v: string) => <Tag>{labelOf(RUN_TYPE_LABEL, v)}</Tag>,
+                },
                 {
                   title: 'Статус',
                   dataIndex: 'status',
@@ -191,7 +205,7 @@ export default function ScenarioDetailPage() {
                   render: (value: number | null) => money(value),
                 },
                 {
-                  title: 'Quality',
+                  title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
                   dataIndex: 'quality_score',
                   align: 'right',
                   render: (value: number | null) => score(value),

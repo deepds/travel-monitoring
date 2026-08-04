@@ -8,7 +8,9 @@ import type { Job } from '@/api/types';
 import { AsyncBlock, PageTitle } from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync, usePolling } from '@/hooks/useAsync';
-import { JOB_STATUS_COLOR, JOB_STATUS_LABEL, dateTime } from '@/utils/format';
+import {
+  JOB_STATUS_COLOR, JOB_STATUS_LABEL, JOB_TYPE_LABEL, dateTime, labelOf,
+} from '@/utils/format';
 
 const { Text } = Typography;
 
@@ -58,7 +60,7 @@ export default function JobsPage() {
     <>
       <PageTitle
         title="Фоновые задачи"
-        subtitle="Job Engine: длительные операции выполняются в фоне и остаются наблюдаемыми"
+        subtitle="Длительные операции выполняются в фоне и остаются наблюдаемыми"
         extra={
           <Space>
             <Text type="secondary">автообновление</Text>
@@ -74,16 +76,7 @@ export default function JobsPage() {
             options={Object.keys(JOB_STATUS_LABEL).map((v) => ({ value: v, label: JOB_STATUS_LABEL[v] }))}
             value={status} onChange={(v) => { setStatus(v); setPage(1); }} />
           <Select allowClear placeholder="Тип задачи" style={{ width: 230 }}
-            options={[
-              { value: 'ON_DEMAND_CALCULATION', label: 'Расчет по запросу' },
-              { value: 'MONITORING_SCENARIO', label: 'Мониторинг сценария' },
-              { value: 'MONITORING_BATCH', label: 'Пакет мониторинга' },
-              { value: 'SNAPSHOT_REPLAY', label: 'Пересчет снимка' },
-              { value: 'SCENARIO_IMPORT', label: 'Импорт сценариев' },
-              { value: 'EXPORT', label: 'Экспорт' },
-              { value: 'SOURCE_HEALTH_CHECK', label: 'Проверка источника' },
-              { value: 'MAINTENANCE', label: 'Обслуживание' },
-            ]}
+            options={Object.entries(JOB_TYPE_LABEL).map(([value, label]) => ({ value, label }))}
             value={jobType} onChange={(v) => { setJobType(v); setPage(1); }} />
           <Space size={4}>
             <Switch size="small" checked={activeOnly} onChange={(v) => { setActiveOnly(v); setPage(1); }} />
@@ -117,7 +110,11 @@ export default function JobsPage() {
                   <span className="tco-monospace">{value.slice(0, 8)}…</span>
                 ),
               },
-              { title: 'Тип', dataIndex: 'job_type', render: (v: string) => <Tag>{v}</Tag> },
+              {
+                title: 'Тип',
+                dataIndex: 'job_type',
+                render: (v: string) => <Tag>{labelOf(JOB_TYPE_LABEL, v)}</Tag>,
+              },
               {
                 title: 'Статус',
                 dataIndex: 'status',
@@ -203,7 +200,7 @@ export default function JobsPage() {
             <Space direction="vertical" style={{ marginBottom: 16 }}>
               <Text className="tco-monospace">{selected.job_id}</Text>
               <Space>
-                <Tag>{selected.job_type}</Tag>
+                <Tag>{labelOf(JOB_TYPE_LABEL, selected.job_type)}</Tag>
                 <Tag color={JOB_STATUS_COLOR[selected.status]}>
                   {JOB_STATUS_LABEL[selected.status] ?? selected.status}
                 </Tag>

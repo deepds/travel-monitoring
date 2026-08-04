@@ -9,7 +9,10 @@ import { useState } from 'react';
 import { ApiError, api } from '@/api/client';
 import { AsyncBlock, PageTitle } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
-import { JOB_STATUS_COLOR, JOB_STATUS_LABEL, dateTime, num } from '@/utils/format';
+import {
+  HEALTH_COMPONENT_LABEL, JOB_STATUS_COLOR, JOB_STATUS_LABEL, JOB_TYPE_LABEL,
+  dateTime, labelOf, num,
+} from '@/utils/format';
 
 const { Text, Paragraph } = Typography;
 
@@ -95,7 +98,7 @@ export default function AdminPage() {
                   type="warning"
                   showIcon
                   style={{ marginTop: 12 }}
-                  message={`Целевое покрытие MVP — не менее ${status.data?.kpi_target_scenarios ?? 100} активных сценариев мониторинга`}
+                  message={`Целевое покрытие — не менее ${status.data?.kpi_target_scenarios ?? 100} активных сценариев мониторинга`}
                 />
               ) : null}
 
@@ -136,7 +139,10 @@ export default function AdminPage() {
             <AsyncBlock loading={health.loading} error={health.error}>
               <Descriptions size="small" column={1} bordered>
                 {(health.data?.components ?? []).map((component) => (
-                  <Descriptions.Item key={component.name} label={component.name}>
+                  <Descriptions.Item
+                    key={component.name}
+                    label={labelOf(HEALTH_COMPONENT_LABEL, component.name)}
+                  >
                     <Space>
                       <Tag color={component.healthy ? 'success' : 'error'}>
                         {component.healthy ? 'исправно' : 'сбой'}
@@ -219,7 +225,11 @@ export default function AdminPage() {
             pagination={false}
             scroll={{ x: 800 }}
             columns={[
-              { title: 'Тип', dataIndex: 'job_type', render: (v: string) => <Tag>{v}</Tag> },
+              {
+                title: 'Тип',
+                dataIndex: 'job_type',
+                render: (v: string) => <Tag>{labelOf(JOB_TYPE_LABEL, v)}</Tag>,
+              },
               {
                 title: 'Статус',
                 dataIndex: 'status',

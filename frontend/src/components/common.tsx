@@ -37,6 +37,34 @@ export function MetricDisclaimer({ text }: { text?: string | null }) {
   );
 }
 
+/**
+ * Значок справки рядом с названием показателя.
+ *
+ * Показатели платформы (оценка качества, доверие к источнику) не считываются из
+ * названия, а без объяснения читаются как «оценка поездки». Значок ставится
+ * справа от подписи везде, где показатель появляется.
+ */
+export function HelpHint({ text }: { text: ReactNode }) {
+  return (
+    <Tooltip title={text} overlayStyle={{ maxWidth: 380 }}>
+      <InfoCircleOutlined
+        style={{ color: '#8c8c8c', marginLeft: 4, cursor: 'help' }}
+        onClick={(event) => event.stopPropagation()}
+      />
+    </Tooltip>
+  );
+}
+
+/** Подпись показателя вместе со значком справки. */
+export function LabelWithHint({ text, hint }: { text: ReactNode; hint: ReactNode }) {
+  return (
+    <span>
+      {text}
+      <HelpHint text={hint} />
+    </span>
+  );
+}
+
 export function ConfidenceTag({ level, reason }: { level: ConfidenceLevel | null; reason?: string | null }) {
   if (!level) return <Tag>—</Tag>;
   const tag = <Tag color={CONFIDENCE_COLOR[level]}>{CONFIDENCE_LABEL[level]}</Tag>;
@@ -80,22 +108,17 @@ interface MetricCardProps {
 }
 
 export function MetricCard({ title, value, suffix, extra, hint, loading }: MetricCardProps) {
+  // Statistic приводит `value` к строке, поэтому готовый узел (например,
+  // индикатор изменения) отдается через formatter: иначе на экран попадает
+  // «[object Object]».
+  const isNode = value !== null && typeof value === 'object';
+
   return (
     <Card size="small" loading={loading}>
       <Statistic
-        title={
-          hint ? (
-            <span>
-              {title}{' '}
-              <Tooltip title={hint}>
-                <InfoCircleOutlined style={{ color: '#8c8c8c' }} />
-              </Tooltip>
-            </span>
-          ) : (
-            title
-          )
-        }
-        value={value as string}
+        title={hint ? <LabelWithHint text={title} hint={hint} /> : title}
+        value={isNode ? undefined : (value as string | number)}
+        formatter={isNode ? () => value : undefined}
         suffix={suffix}
         valueStyle={{ fontSize: 22 }}
       />

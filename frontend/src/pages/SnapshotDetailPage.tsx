@@ -8,10 +8,17 @@ import { Link, useParams } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
 import type { Offer, RunBrief, SnapshotSourceRow } from '@/api/types';
-import { AsyncBlock, ConfidenceTag, PageTitle, RunStatusTag, SyntheticTag } from '@/components/common';
+import {
+  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
+} from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
-import { OUTCOME_COLOR, dateTime, money, num, score } from '@/utils/format';
+import {
+  CLASSIFICATION_LABEL, EXCLUSION_LABEL, OFFER_TYPE_LABEL, OUTCOME_COLOR, OUTCOME_LABEL,
+  PROFILE_STATUS_LABEL, RUN_TYPE_LABEL, SNAPSHOT_STATUS_LABEL, SNAPSHOT_TYPE_LABEL,
+  VALIDITY_LABEL, dateTime, labelOf, money, num, score,
+} from '@/utils/format';
+import { QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
 
 const { Text } = Typography;
 
@@ -75,10 +82,12 @@ export default function SnapshotDetailPage() {
             <Card size="small" title="Метаданные">
               <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
                 <Descriptions.Item label="Статус">
-                  <Tag color={data?.status === 'COMPLETE' ? 'success' : 'warning'}>{data?.status}</Tag>
+                  <Tag color={data?.status === 'COMPLETE' ? 'success' : 'warning'}>
+                    {labelOf(SNAPSHOT_STATUS_LABEL, data?.status)}
+                  </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="Тип">
-                  <Tag>{data?.snapshot_type}</Tag>
+                  <Tag>{labelOf(SNAPSHOT_TYPE_LABEL, data?.snapshot_type)}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="Момент наблюдения">
                   {dateTime(data?.observed_at)}
@@ -98,8 +107,12 @@ export default function SnapshotDetailPage() {
                 <Descriptions.Item label="Невалидных">{num(data?.invalid_offer_count)}</Descriptions.Item>
                 <Descriptions.Item label="Дубликатов">{num(data?.duplicate_offer_count)}</Descriptions.Item>
                 <Descriptions.Item label="Выбросов">{num(data?.outlier_offer_count)}</Descriptions.Item>
-                <Descriptions.Item label="Raw-ответов">{num(data?.raw_response_count)}</Descriptions.Item>
-                <Descriptions.Item label="HTML-снимков">{num(data?.html_snapshot_count)}</Descriptions.Item>
+                <Descriptions.Item label="Исходных ответов">
+                  {num(data?.raw_response_count)}
+                </Descriptions.Item>
+                <Descriptions.Item label="Снимков страниц">
+                  {num(data?.html_snapshot_count)}
+                </Descriptions.Item>
                 <Descriptions.Item label="Версия нормализации">
                   {data?.normalization_version}
                 </Descriptions.Item>
@@ -134,7 +147,11 @@ export default function SnapshotDetailPage() {
                       </Link>
                     ),
                   },
-                  { title: 'Тип', dataIndex: 'run_type', render: (v: string) => <Tag>{v}</Tag> },
+                  {
+                    title: 'Тип',
+                    dataIndex: 'run_type',
+                    render: (v: string) => <Tag>{labelOf(RUN_TYPE_LABEL, v)}</Tag>,
+                  },
                   {
                     title: 'Статус',
                     dataIndex: 'status',
@@ -147,7 +164,7 @@ export default function SnapshotDetailPage() {
                     render: (v: number | null) => money(v),
                   },
                   {
-                    title: 'Quality',
+                    title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
                     dataIndex: 'quality_score',
                     align: 'right',
                     render: (v: number | null) => score(v),
@@ -179,12 +196,18 @@ export default function SnapshotDetailPage() {
                       scroll={{ x: 1000 }}
                       columns={[
                         { title: 'Источник', dataIndex: 'source_code' },
-                        { title: 'Тип', dataIndex: 'offer_type', render: (v: string) => <Tag>{v}</Tag> },
+                        {
+                          title: 'Тип',
+                          dataIndex: 'offer_type',
+                          render: (v: string) => <Tag>{labelOf(OFFER_TYPE_LABEL, v)}</Tag>,
+                        },
                         {
                           title: 'Итог',
                           dataIndex: 'outcome',
                           render: (value: string) => (
-                            <Tag color={OUTCOME_COLOR[value] ?? 'default'}>{value}</Tag>
+                            <Tag color={OUTCOME_COLOR[value] ?? 'default'}>
+                              {labelOf(OUTCOME_LABEL, value)}
+                            </Tag>
                           ),
                         },
                         {
@@ -234,7 +257,11 @@ export default function SnapshotDetailPage() {
                       }}
                       columns={[
                         { title: 'Источник', dataIndex: 'source_code' },
-                        { title: 'Тип', dataIndex: 'offer_type', render: (v: string) => <Tag>{v}</Tag> },
+                        {
+                          title: 'Тип',
+                          dataIndex: 'offer_type',
+                          render: (v: string) => <Tag>{labelOf(OFFER_TYPE_LABEL, v)}</Tag>,
+                        },
                         {
                           title: 'Цена',
                           dataIndex: 'total_price',
@@ -251,14 +278,18 @@ export default function SnapshotDetailPage() {
                           title: 'Валидность',
                           dataIndex: 'validity_status',
                           render: (value: string) => (
-                            <Tag color={value === 'VALID' ? 'success' : 'error'}>{value}</Tag>
+                            <Tag color={value === 'VALID' ? 'success' : 'error'}>
+                              {labelOf(VALIDITY_LABEL, value)}
+                            </Tag>
                           ),
                         },
                         {
                           title: 'Классификация',
                           dataIndex: 'classification_status',
                           render: (value: string) => (
-                            <Tag color={value === 'CLASSIFIED' ? 'default' : 'warning'}>{value}</Tag>
+                            <Tag color={value === 'CLASSIFIED' ? 'default' : 'warning'}>
+                              {labelOf(CLASSIFICATION_LABEL, value)}
+                            </Tag>
                           ),
                         },
                         {
@@ -267,7 +298,7 @@ export default function SnapshotDetailPage() {
                           render: (value: string, row) =>
                             value && value !== 'NONE' ? (
                               <Tag color="orange" title={row.exclusion_detail ?? undefined}>
-                                {value}
+                                {labelOf(EXCLUSION_LABEL, value)}
                               </Tag>
                             ) : (
                               <Tag color="success">учтено</Tag>
@@ -285,7 +316,7 @@ export default function SnapshotDetailPage() {
               },
               {
                 key: 'artifacts',
-                label: 'Raw-артефакты',
+                label: 'Исходные ответы',
                 children: (
                   <AsyncBlock loading={artifacts.loading} error={artifacts.error}>
                     <Text type="secondary">
@@ -300,8 +331,12 @@ export default function SnapshotDetailPage() {
                       scroll={{ x: 900 }}
                       columns={[
                         { title: 'Источник', dataIndex: 'source_code' },
-                        { title: 'Тип', dataIndex: 'offer_type' },
-                        { title: 'HTTP', dataIndex: 'http_status', align: 'right' },
+                        {
+                          title: 'Тип',
+                          dataIndex: 'offer_type',
+                          render: (v: string) => labelOf(OFFER_TYPE_LABEL, v),
+                        },
+                        { title: 'Код ответа', dataIndex: 'http_status', align: 'right' },
                         {
                           title: 'Задержка',
                           dataIndex: 'latency_ms',
@@ -366,7 +401,7 @@ export default function SnapshotDetailPage() {
             onChange={setProfileId}
             options={(profiles.data?.items ?? []).map((p) => ({
               value: p.id,
-              label: `${p.label} — ${p.status}`,
+              label: `${p.label} — ${labelOf(PROFILE_STATUS_LABEL, p.status)}`,
             }))}
           />
         </Space>

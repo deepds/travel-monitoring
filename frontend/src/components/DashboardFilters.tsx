@@ -4,7 +4,9 @@ import { Button, Card, Checkbox, Col, Row, Select, Slider } from 'antd';
 import { useMemo } from 'react';
 
 import { api } from '@/api/client';
+import { HelpHint } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
+import { MIN_QUALITY_SCORE_HINT } from '@/utils/hints';
 
 export interface Filters {
   origin?: string;
@@ -74,7 +76,8 @@ export function DashboardFilterBar({ value, onChange }: Props) {
         </Col>
         <Col xs={24} sm={12} md={5}>
           <div style={{ fontSize: 12, color: '#8c8c8c' }}>
-            Мин. Quality Score: {value.min_quality_score ?? 0}
+            Мин. оценка качества: {value.min_quality_score ?? 0}
+            <HelpHint text={MIN_QUALITY_SCORE_HINT} />
           </div>
           <Slider
             min={0}

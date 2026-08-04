@@ -7,7 +7,9 @@ import type { ScenarioBrief } from '@/api/types';
 import { AsyncBlock, PageTitle } from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
-import { ACCOMMODATION_LABEL, TRANSPORT_LABEL, dateOnly, starsLabel } from '@/utils/format';
+import {
+  ACCOMMODATION_LABEL, SCENARIO_TYPE_LABEL, TRANSPORT_LABEL, dateOnly, labelOf, starsLabel,
+} from '@/utils/format';
 
 export default function ScenariosPage() {
   const { message } = App.useApp();
@@ -169,7 +171,11 @@ export default function ScenariosPage() {
               {
                 title: 'Режим',
                 dataIndex: 'scenario_type',
-                render: (value: string) => <Tag color={value === 'MONITORING' ? 'blue' : 'default'}>{value}</Tag>,
+                render: (value: string) => (
+                  <Tag color={value === 'MONITORING' ? 'blue' : 'default'}>
+                    {labelOf(SCENARIO_TYPE_LABEL, value)}
+                  </Tag>
+                ),
               },
               {
                 title: 'Статус',

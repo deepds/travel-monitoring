@@ -5,17 +5,21 @@ import { api } from '@/api/client';
 import type { AuditEvent } from '@/api/types';
 import { AsyncBlock, PageTitle } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
-import { dateTime } from '@/utils/format';
+import { AUDIT_ACTION_LABEL, USER_ROLE_LABEL, dateTime, labelOf } from '@/utils/format';
 
 const { Text } = Typography;
 
-const ACTIONS = [
-  'LOGIN', 'SCENARIO_CREATE', 'SCENARIO_UPDATE', 'SCENARIO_ACTIVATE', 'SCENARIO_DEACTIVATE',
-  'SCENARIO_DELETE', 'SCENARIO_IMPORT', 'PROFILE_CREATE', 'PROFILE_ACTIVATE', 'PROFILE_ARCHIVE',
-  'PROFILE_CLONE', 'SOURCE_UPDATE', 'SOURCE_ENABLE', 'SOURCE_DISABLE', 'SOURCE_HEALTH_CHECK',
-  'SOURCE_CONFIDENCE_OVERRIDE', 'MONITORING_RUN', 'SNAPSHOT_RECALCULATE', 'JOB_RETRY',
-  'JOB_CANCEL', 'EXPORT', 'CACHE_PURGE', 'RETENTION_CLEANUP',
-];
+/** Типы объектов, к которым относятся записи журнала. */
+const OBJECT_TYPE_LABEL: Record<string, string> = {
+  TravelScenario: 'Сценарий',
+  MarketSnapshot: 'Снимок рынка',
+  CalculationProfile: 'Профиль расчета',
+  Source: 'Источник',
+  SourceConfidence: 'Доверие к источнику',
+  MonitoringBatch: 'Пакет мониторинга',
+  Job: 'Задача',
+  User: 'Пользователь',
+};
 
 const CRITICAL = new Set([
   'SOURCE_CONFIDENCE_OVERRIDE', 'PROFILE_ACTIVATE', 'PROFILE_ARCHIVE',
@@ -47,7 +51,10 @@ export default function AuditPage() {
             showSearch
             placeholder="Действие"
             style={{ width: 280 }}
-            options={ACTIONS.map((value) => ({ value, label: value }))}
+            options={Object.entries(AUDIT_ACTION_LABEL).map(([value, label]) => ({
+              value,
+              label,
+            }))}
             value={action}
             onChange={(value) => { setAction(value); setPage(1); }}
           />
@@ -93,7 +100,9 @@ export default function AuditPage() {
                 title: 'Действие',
                 dataIndex: 'action',
                 render: (value: string) => (
-                  <Tag color={CRITICAL.has(value) ? 'red' : 'default'}>{value}</Tag>
+                  <Tag color={CRITICAL.has(value) ? 'red' : 'default'}>
+                    {labelOf(AUDIT_ACTION_LABEL, value)}
+                  </Tag>
                 ),
               },
               {
@@ -103,7 +112,9 @@ export default function AuditPage() {
                   <span>
                     {row.actor.username ?? '—'}
                     {row.actor.role ? (
-                      <Tag style={{ marginLeft: 6 }}>{row.actor.role}</Tag>
+                      <Tag style={{ marginLeft: 6 }}>
+                        {labelOf(USER_ROLE_LABEL, row.actor.role)}
+                      </Tag>
                     ) : null}
                   </span>
                 ),
@@ -114,7 +125,7 @@ export default function AuditPage() {
                 render: (_, row) =>
                   row.object_type ? (
                     <span>
-                      {row.object_type}
+                      {labelOf(OBJECT_TYPE_LABEL, row.object_type)}
                       <br />
                       <Text type="secondary" className="tco-monospace" style={{ fontSize: 11 }}>
                         {row.object_id?.slice(0, 18)}

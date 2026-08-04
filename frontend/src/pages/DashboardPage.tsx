@@ -6,12 +6,15 @@ import { Link } from 'react-router-dom';
 import { api } from '@/api/client';
 import type { DirectionRow } from '@/api/types';
 import {
-  AsyncBlock, ChangeIndicator, MetricCard, MetricDisclaimer, PageTitle, SyntheticTag,
+  AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle, SyntheticTag,
 } from '@/components/common';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
 import { useAsync } from '@/hooks/useAsync';
 import { dateTime, money, num, percent, score, TRANSPORT_LABEL } from '@/utils/format';
+import {
+  AVG_QUALITY_SCORE_HINT, KPI_STABILITY_HINT, QUALITY_SCORE_SHORT_HINT,
+} from '@/utils/hints';
 
 const { Text } = Typography;
 
@@ -129,7 +132,7 @@ export default function DashboardPage() {
       render: (value: number | null) => <ChangeIndicator value={value} />,
     },
     {
-      title: 'Quality',
+      title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
       dataIndex: 'avg_quality_score',
       align: 'right' as const,
       render: (value: number | null) => score(value),
@@ -213,9 +216,9 @@ export default function DashboardPage() {
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
-              title="Средний Quality Score"
+              title="Средняя оценка качества"
               value={score(data?.avg_quality_score as number)}
-              hint="Техническое и статистическое качество расчетов выборки."
+              hint={AVG_QUALITY_SCORE_HINT}
               extra={
                 <span>
                   <Tag color="success">
@@ -247,7 +250,7 @@ export default function DashboardPage() {
             <MetricCard
               title="KPI стабильности"
               value={percent(data?.kpi_pass_rate as number, 0)}
-              hint="Доля расчетов SUCCESS либо PARTIAL_SUCCESS выше порога Quality Score. Целевое значение — не менее 80 %."
+              hint={KPI_STABILITY_HINT}
             />
           </Col>
           <Col xs={24} sm={8}>

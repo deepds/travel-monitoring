@@ -11,10 +11,13 @@ import { Link } from 'react-router-dom';
 import { ApiError, api } from '@/api/client';
 import type { Job, Run } from '@/api/types';
 import {
-  ConfidenceTag, MetricDisclaimer, PageTitle, RunStatusTag, SyntheticTag,
+  ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag, SyntheticTag,
 } from '@/components/common';
 import { useAsync, usePolling } from '@/hooks/useAsync';
-import { JOB_STATUS_COLOR, JOB_STATUS_LABEL, money, num, percent, score } from '@/utils/format';
+import {
+  COMPONENT_STATUS_LABEL, JOB_STATUS_COLOR, JOB_STATUS_LABEL, labelOf, money, num, percent, score,
+} from '@/utils/format';
+import { QUALITY_SCORE_HINT } from '@/utils/hints';
 
 const { Text, Paragraph } = Typography;
 const TERMINAL = ['SUCCESS', 'FAILED', 'PARTIAL', 'CANCELLED', 'TIMED_OUT'];
@@ -427,7 +430,7 @@ function RunResult({ run }: { run: Run }) {
         {run.served_from_cache ? <Tag color="blue">из кэша</Tag> : null}
         {run.component_statuses.map((status) => (
           <Tag key={status} color="warning">
-            {status}
+            {labelOf(COMPONENT_STATUS_LABEL, status)}
           </Tag>
         ))}
       </Space>
@@ -484,7 +487,11 @@ function RunResult({ run }: { run: Run }) {
               : ''}
           </Text>
         </Descriptions.Item>
-        <Descriptions.Item label="Quality Score">{score(run.quality_score)}</Descriptions.Item>
+        <Descriptions.Item
+          label={<LabelWithHint text="Оценка качества" hint={QUALITY_SCORE_HINT} />}
+        >
+          {score(run.quality_score)}
+        </Descriptions.Item>
         <Descriptions.Item label="Доля транспорта">
           {percent(run.total.transport_share)}
         </Descriptions.Item>

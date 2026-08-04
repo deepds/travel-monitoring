@@ -7,7 +7,9 @@ import { AsyncBlock, PageTitle } from '@/components/common';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
 import { useAsync, usePolling } from '@/hooks/useAsync';
-import { JOB_STATUS_COLOR, JOB_STATUS_LABEL, dateTime, num } from '@/utils/format';
+import {
+  EXPORT_DATASET_LABEL, JOB_STATUS_COLOR, JOB_STATUS_LABEL, dateTime, labelOf, num,
+} from '@/utils/format';
 
 const { Text } = Typography;
 const TERMINAL = ['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'PARTIAL'];
@@ -56,7 +58,7 @@ export default function ExportsPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message="Что попадает в выгрузку"
-        description="Параметры сценария, дата расчета, горизонт бронирования, компонентные стоимости, итог, P25–P75, Quality Score, статус, источники, профиль и его версия."
+        description="Параметры сценария, дата расчета, горизонт бронирования, компонентные стоимости, итог, P25–P75, оценка качества, статус, источники, профиль и его версия."
       />
 
       <Card size="small" title="Параметры выгрузки" style={{ marginBottom: 16 }}>
@@ -66,11 +68,10 @@ export default function ExportsPage() {
               <Select
                 value={dataset}
                 onChange={setDataset}
-                options={[
-                  { value: 'SCENARIO_RUNS', label: 'Расчеты (ScenarioRun)' },
-                  { value: 'OFFERS', label: 'Предложения' },
-                  { value: 'SOURCE_METRICS', label: 'Метрики источников' },
-                ]}
+                options={Object.entries(EXPORT_DATASET_LABEL).map(([value, label]) => ({
+                  value,
+                  label,
+                }))}
               />
             </Form.Item>
           </Col>
@@ -110,7 +111,7 @@ export default function ExportsPage() {
                 key: 'dataset',
                 render: (_, row: any) => (
                   <Space>
-                    <Tag>{row.params?.dataset}</Tag>
+                    <Tag>{labelOf(EXPORT_DATASET_LABEL, row.params?.dataset)}</Tag>
                     <Tag>{row.params?.format}</Tag>
                   </Space>
                 ),

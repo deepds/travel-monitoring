@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { ApiError } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
+import { DEPLOYMENT_MODE_LABEL, ENVIRONMENT_LABEL, labelOf } from '@/utils/format';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -66,8 +67,9 @@ export default function LoginPage() {
         {version ? (
           <div style={{ marginTop: 20, textAlign: 'center' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Версия {version.versions.app} · среда {version.environment} · режим{' '}
-              {version.deployment_mode}
+              Версия {version.versions.app} ·{' '}
+              {labelOf(ENVIRONMENT_LABEL, version.environment).toLowerCase()} · вход:{' '}
+              {labelOf(DEPLOYMENT_MODE_LABEL, version.deployment_mode)}
             </Text>
             {version.sandbox_sources_enabled ? (
               <Alert

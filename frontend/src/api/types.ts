@@ -278,6 +278,8 @@ export interface Source {
   is_enabled: boolean;
   is_synthetic: boolean;
   is_usable: boolean;
+  /** Признаки, которых нет в контракте источника (см. OfferAttribute). */
+  unreported_attributes?: string[];
   legal_status: string | null;
   storage_allowed: boolean;
   html_storage_allowed: boolean;

@@ -7,10 +7,15 @@ import { useState } from 'react';
 
 import { ApiError, api } from '@/api/client';
 import type { Source } from '@/api/types';
-import { AsyncBlock, PageTitle } from '@/components/common';
+import { AsyncBlock, HelpHint, PageTitle } from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
-import { dateTime, num, percent, score } from '@/utils/format';
+import {
+  COMPONENT_LABEL, LEGAL_STATUS_LABEL, OFFER_ATTRIBUTE_LABEL, OFFER_TYPE_LABEL, OUTCOME_LABEL,
+  PROTOCOL_LABEL, QUALIFICATION_LABEL, SOURCE_CONFIDENCE_LABEL, SOURCE_FACTOR_LABEL,
+  SOURCE_METRIC_LABEL, dateTime, labelOf, num, percent, score,
+} from '@/utils/format';
+import { SOURCE_CONFIDENCE_HINT, UNREPORTED_ATTRIBUTES_HINT } from '@/utils/hints';
 
 const { Text, Paragraph } = Typography;
 
@@ -20,6 +25,31 @@ const CONFIDENCE_COLOR: Record<string, string> = {
   LOW: 'orange',
   UNTRUSTED: 'red',
 };
+
+/**
+ * Значение технической метрики источника.
+ *
+ * Разбивка ошибок приходит объектом, поэтому печатать значения через `String()`
+ * нельзя: на экран попадало бы «[object Object]».
+ */
+function MetricValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined) return <>—</>;
+  if (typeof value === 'number') return <>{value.toFixed(3).replace(/\.?0+$/, '')}</>;
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, number>);
+    if (!entries.length) return <Text type="secondary">нет</Text>;
+    return (
+      <>
+        {entries.map(([outcome, count]) => (
+          <Tag key={outcome}>
+            {labelOf(OUTCOME_LABEL, outcome)}: {count}
+          </Tag>
+        ))}
+      </>
+    );
+  }
+  return <>{String(value)}</>;
+}
 
 export default function SourcesPage() {
   const { message } = App.useApp();
@@ -57,7 +87,7 @@ export default function SourcesPage() {
     try {
       const result = await api.healthCheckSource(row.code);
       message.success({
-        content: `Проверка завершена: ${JSON.stringify(result.check?.outcome ?? result.check ?? '')}`,
+        content: `Проверка завершена: ${labelOf(OUTCOME_LABEL, result.check?.outcome)}`,
         key: 'hc',
       });
       sources.reload();
@@ -72,7 +102,10 @@ export default function SourcesPage() {
   const recalcConfidence = async (row: Source) => {
     try {
       const result = await api.recalcConfidence(row.code);
-      message.success(`Доверие пересчитано: ${result.score.toFixed(1)} (${result.level})`);
+      message.success(
+        `Доверие пересчитано: ${result.score.toFixed(1)} ` +
+          `(${labelOf(SOURCE_CONFIDENCE_LABEL, result.level).toLowerCase()})`,
+      );
       overview.reload();
       confidence.reload();
     } catch (exc) {
@@ -109,7 +142,7 @@ export default function SourcesPage() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="Source Confidence — не то же самое, что технический health"
+        message="Доверие к источнику — не то же самое, что его техническая доступность"
         description="Это долгосрочная оценка доверия к источнику как поставщику данных. Она влияет на уверенность в результате, но не используется как непрозрачный вес цены."
       />
 
@@ -148,17 +181,21 @@ export default function SourcesPage() {
                 dataIndex: 'category',
                 render: (value: string, row) => (
                   <span>
-                    <Tag>{value === 'TRANSPORT' ? 'Транспорт' : 'Проживание'}</Tag>
+                    <Tag>{labelOf(COMPONENT_LABEL, value)}</Tag>
                     <br />
                     {row.offer_types.map((t) => (
                       <Tag key={t} style={{ fontSize: 11 }}>
-                        {t}
+                        {labelOf(OFFER_TYPE_LABEL, t)}
                       </Tag>
                     ))}
                   </span>
                 ),
               },
-              { title: 'Протокол', dataIndex: 'protocol', render: (v: string) => <Tag>{v}</Tag> },
+              {
+                title: 'Протокол',
+                dataIndex: 'protocol',
+                render: (v: string) => <Tag>{labelOf(PROTOCOL_LABEL, v)}</Tag>,
+              },
               {
                 title: 'Квалификация',
                 dataIndex: 'qualification_status',
@@ -170,7 +207,7 @@ export default function SourcesPage() {
                         : value === 'REJECTED' ? 'error' : 'default'
                     }
                   >
-                    {value}
+                    {labelOf(QUALIFICATION_LABEL, value)}
                   </Tag>
                 ),
               },
@@ -198,7 +235,12 @@ export default function SourcesPage() {
                 },
               },
               {
-                title: 'Доверие',
+                title: (
+                  <span>
+                    Доверие
+                    <HelpHint text={SOURCE_CONFIDENCE_HINT} />
+                  </span>
+                ),
                 key: 'confidence',
                 align: 'right',
                 render: (_, row) => {
@@ -206,7 +248,8 @@ export default function SourcesPage() {
                   const level = info?.confidence_level;
                   return level ? (
                     <Tag color={CONFIDENCE_COLOR[level]}>
-                      {score(info?.confidence_score)} · {level}
+                      {score(info?.confidence_score)} ·{' '}
+                      {labelOf(SOURCE_CONFIDENCE_LABEL, level)}
                     </Tag>
                   ) : (
                     <Text type="secondary">не рассчитано</Text>
@@ -263,7 +306,7 @@ export default function SourcesPage() {
         extra={
           can('ADMIN') && selected ? (
             <Button size="small" onClick={() => setOverrideOpen(true)}>
-              Ручной override доверия
+              Задать доверие вручную
             </Button>
           ) : null
         }
@@ -272,11 +315,11 @@ export default function SourcesPage() {
           <>
             <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
               <Descriptions.Item label="Юридический статус">
-                {selected.legal_status ?? '—'}
+                {labelOf(LEGAL_STATUS_LABEL, selected.legal_status)}
               </Descriptions.Item>
               <Descriptions.Item label="Право хранения">
-                {selected.storage_allowed ? 'разрешено' : 'запрещено'} · HTML:{' '}
-                {selected.html_storage_allowed ? 'разрешен' : 'запрещен'}
+                данные — {selected.storage_allowed ? 'разрешено' : 'запрещено'} · страницы —{' '}
+                {selected.html_storage_allowed ? 'разрешено' : 'запрещено'}
               </Descriptions.Item>
               <Descriptions.Item label="Горизонт">
                 {selected.horizon.min_supported_date ?? '—'} — {selected.horizon.max_supported_date ?? '—'}
@@ -299,27 +342,54 @@ export default function SourcesPage() {
               <Descriptions.Item label="Версия коннектора">
                 {(selected as any).connector_version ?? '—'}
               </Descriptions.Item>
+              <Descriptions.Item
+                label={
+                  <span>
+                    Не сообщает
+                    <HelpHint text={UNREPORTED_ATTRIBUTES_HINT} />
+                  </span>
+                }
+              >
+                {selected.unreported_attributes?.length ? (
+                  selected.unreported_attributes.map((attribute) => (
+                    <Tag key={attribute} color="gold">
+                      {labelOf(OFFER_ATTRIBUTE_LABEL, attribute)}
+                    </Tag>
+                  ))
+                ) : (
+                  <Text type="secondary">все признаки контракта заполняются</Text>
+                )}
+              </Descriptions.Item>
             </Descriptions>
 
             <Card size="small" title="Технические метрики за 30 дней" style={{ marginBottom: 16 }}>
               <AsyncBlock loading={metrics.loading} error={metrics.error}>
                 <Descriptions size="small" column={2} bordered>
                   {Object.entries(metrics.data?.summary ?? {}).map(([key, value]) => (
-                    <Descriptions.Item key={key} label={key}>
-                      {typeof value === 'number' ? value.toFixed(3).replace(/\.?0+$/, '') : String(value ?? '—')}
+                    <Descriptions.Item key={key} label={labelOf(SOURCE_METRIC_LABEL, key)}>
+                      <MetricValue value={value} />
                     </Descriptions.Item>
                   ))}
                 </Descriptions>
               </AsyncBlock>
             </Card>
 
-            <Card size="small" title="Source Confidence">
+            <Card
+              size="small"
+              title={
+                <span>
+                  Доверие к источнику
+                  <HelpHint text={SOURCE_CONFIDENCE_HINT} />
+                </span>
+              }
+            >
               <AsyncBlock loading={confidence.loading} error={confidence.error}>
                 {confidence.data?.current ? (
                   <>
                     <Space style={{ marginBottom: 12 }}>
                       <Tag color={CONFIDENCE_COLOR[confidence.data.current.level]}>
-                        {score(confidence.data.current.effective_score)} · {confidence.data.current.level}
+                        {score(confidence.data.current.effective_score)} ·{' '}
+                        {labelOf(SOURCE_CONFIDENCE_LABEL, confidence.data.current.level)}
                       </Tag>
                       <Text type="secondary">
                         формула {confidence.data.current.formula_version} · расчет{' '}
@@ -341,7 +411,7 @@ export default function SourcesPage() {
                     {Object.entries(confidence.data.current.factor_scores ?? {}).map(([key, value]) => (
                       <div key={key} style={{ marginBottom: 6 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                          <span>{key}</span>
+                          <span>{labelOf(SOURCE_FACTOR_LABEL, key)}</span>
                           <span>{((value as number) * 100).toFixed(0)} %</span>
                         </div>
                         <Progress percent={Math.round((value as number) * 100)} size="small" showInfo={false} />
@@ -358,7 +428,7 @@ export default function SourcesPage() {
       </Drawer>
 
       <Modal
-        title="Ручной override Source Confidence"
+        title="Ручное значение доверия к источнику"
         open={overrideOpen}
         onCancel={() => setOverrideOpen(false)}
         onOk={() => form.submit()}

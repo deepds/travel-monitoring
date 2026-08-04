@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { useAuth } from '@/auth/AuthContext';
+import { ENVIRONMENT_LABEL, USER_ROLE_LABEL, labelOf } from '@/utils/format';
 import AuditPage from '@/pages/AuditPage';
 import ConstructorPage from '@/pages/ConstructorPage';
 import DashboardPage from '@/pages/DashboardPage';
@@ -107,7 +108,7 @@ export default function App() {
               </Tag>
             ) : null}
             {version?.environment && version.environment !== 'prod' ? (
-              <Tag>{version.environment}</Tag>
+              <Tag>{labelOf(ENVIRONMENT_LABEL, version.environment)}</Tag>
             ) : null}
           </div>
 
@@ -116,7 +117,7 @@ export default function App() {
               {principal.display_name ?? principal.username}
             </Text>
             <Tag color={principal.role === 'ADMIN' ? 'gold' : principal.role === 'ANALYST' ? 'blue' : 'default'}>
-              {principal.role}
+              {labelOf(USER_ROLE_LABEL, principal.role)}
             </Tag>
             <a onClick={logout} title="Выйти">
               <LogoutOutlined />

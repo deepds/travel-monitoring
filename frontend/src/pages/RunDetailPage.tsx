@@ -6,21 +6,16 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '@/api/client';
 import type { SourceBreakdownRow } from '@/api/types';
 import {
-  AsyncBlock, ConfidenceTag, MetricDisclaimer, PageTitle, RunStatusTag, SyntheticTag,
+  AsyncBlock, ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag, SyntheticTag,
 } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
-import { dateTime, money, num, percent, score } from '@/utils/format';
+import {
+  COMPONENT_LABEL, COMPONENT_STATUS_LABEL, CONFIDENCE_LABEL, FILTER_REASON_LABEL,
+  QUALITY_FACTOR_LABEL, dateTime, labelOf, money, num, percent, score,
+} from '@/utils/format';
+import { QUALITY_SCORE_HINT } from '@/utils/hints';
 
 const { Text, Paragraph } = Typography;
-
-const FACTOR_TITLES: Record<string, string> = {
-  component_completeness: 'Полнота компонентов',
-  source_count: 'Число источников',
-  offer_count: 'Число предложений',
-  source_agreement: 'Согласованность источников',
-  freshness: 'Свежесть данных',
-  connector_stability: 'Стабильность коннекторов',
-};
 
 export default function RunDetailPage() {
   const { id = '' } = useParams();
@@ -37,7 +32,7 @@ export default function RunDetailPage() {
       tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}: ${(p.value * 100).toFixed(0)} %` },
       radar: {
         indicator: Object.keys(factors).map((key) => ({
-          name: FACTOR_TITLES[key] ?? key,
+          name: labelOf(QUALITY_FACTOR_LABEL, key),
           max: 1,
         })),
         radius: '65%',
@@ -77,7 +72,7 @@ export default function RunDetailPage() {
           {data?.served_from_cache ? <Tag color="blue">из кэша</Tag> : null}
           {(data?.component_statuses ?? []).map((status) => (
             <Tag key={status} color="warning">
-              {status}
+              {labelOf(COMPONENT_STATUS_LABEL, status)}
             </Tag>
           ))}
           <Tag>
@@ -92,7 +87,7 @@ export default function RunDetailPage() {
             type="error"
             showIcon
             style={{ marginBottom: 16 }}
-            message="Уровень уверенности INSUFFICIENT"
+            message={`Уровень уверенности: ${CONFIDENCE_LABEL.INSUFFICIENT.toLowerCase()}`}
             description={
               data?.confidence.reason ??
               'Итог не может быть представлен как полноценная расчетная стоимость.'
@@ -172,7 +167,15 @@ export default function RunDetailPage() {
           </Col>
 
           <Col xs={24} lg={10}>
-            <Card size="small" title={`Quality Score: ${score(data?.quality_score)}`}>
+            <Card
+              size="small"
+              title={
+                <LabelWithHint
+                  text={`Оценка качества: ${score(data?.quality_score)}`}
+                  hint={QUALITY_SCORE_HINT}
+                />
+              }
+            >
               {Object.keys(factors).length ? (
                 <ReactECharts option={qualityOption} style={{ height: 240 }} notMerge />
               ) : null}
@@ -180,7 +183,7 @@ export default function RunDetailPage() {
                 {Object.entries(factors).map(([key, value]) => (
                   <div key={key} style={{ marginBottom: 6 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                      <span>{FACTOR_TITLES[key] ?? key}</span>
+                      <span>{labelOf(QUALITY_FACTOR_LABEL, key)}</span>
                       <span>
                         {(value * 100).toFixed(0)} %
                         {weights[key] ? (
@@ -225,7 +228,7 @@ export default function RunDetailPage() {
                           dataIndex: 'component',
                           render: (value: string) => (
                             <Tag color={value === 'TRANSPORT' ? 'blue' : 'green'}>
-                              {value === 'TRANSPORT' ? 'Транспорт' : 'Проживание'}
+                              {labelOf(COMPONENT_LABEL, value)}
                             </Tag>
                           ),
                         },
@@ -388,7 +391,7 @@ function ExplainView({ payload }: { payload: Record<string, any> }) {
               <Text type="secondary">Причины отсева: </Text>
               {Object.entries(info.filter_reasons).map(([reason, count]) => (
                 <Tag key={reason}>
-                  {reason}: {String(count)}
+                  {labelOf(FILTER_REASON_LABEL, reason)}: {String(count)}
                 </Tag>
               ))}
             </div>
@@ -397,7 +400,9 @@ function ExplainView({ payload }: { payload: Record<string, any> }) {
       ))}
 
       <details>
-        <summary style={{ cursor: 'pointer', marginBottom: 8 }}>Полный payload объяснимости</summary>
+        <summary style={{ cursor: 'pointer', marginBottom: 8 }}>
+          Полные данные объяснимости
+        </summary>
         <pre className="tco-monospace" style={{ whiteSpace: 'pre-wrap', maxHeight: 420, overflow: 'auto' }}>
           {JSON.stringify(payload, null, 2)}
         </pre>

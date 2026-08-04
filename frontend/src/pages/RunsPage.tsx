@@ -4,9 +4,12 @@ import { Link } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import type { RunBrief } from '@/api/types';
-import { AsyncBlock, ConfidenceTag, PageTitle, RunStatusTag, SyntheticTag } from '@/components/common';
+import {
+  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
+} from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
-import { dateOnly, dateTime, money, score } from '@/utils/format';
+import { RUN_TYPE_LABEL, dateOnly, dateTime, labelOf, money, score } from '@/utils/format';
+import { QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
 
 const { Text } = Typography;
 
@@ -44,7 +47,7 @@ export default function RunsPage() {
     <>
       <PageTitle
         title="Расчеты"
-        subtitle="ScenarioRun — неизменяемый исторический результат применения методики"
+        subtitle="Неизменяемый исторический результат применения методики к снимку рынка"
       />
 
       <Card size="small" style={{ marginBottom: 16 }}>
@@ -138,7 +141,11 @@ export default function RunsPage() {
                   </span>
                 ),
               },
-              { title: 'Тип', dataIndex: 'run_type', render: (v: string) => <Tag>{v}</Tag> },
+              {
+                title: 'Тип',
+                dataIndex: 'run_type',
+                render: (v: string) => <Tag>{labelOf(RUN_TYPE_LABEL, v)}</Tag>,
+              },
               { title: 'Статус', dataIndex: 'status', render: (v: any) => <RunStatusTag status={v} /> },
               {
                 title: 'Итого',
@@ -153,7 +160,7 @@ export default function RunsPage() {
                 render: (value: number | null) => money(value),
               },
               {
-                title: 'Quality',
+                title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
                 dataIndex: 'quality_score',
                 align: 'right',
                 render: (value: number | null) => score(value),

@@ -25,7 +25,10 @@ COPY security-headers.inc /etc/nginx/conf.d/security-headers.inc
 # пользователя внутри контейнера; порт 80 остается внутренним.
 EXPOSE 80
 
+# Адрес именно 127.0.0.1, а не localhost: nginx слушает только IPv4, а wget
+# из busybox для имени localhost сначала пробует ::1 и получает отказ —
+# контейнер числился бы unhealthy при полностью работоспособной раздаче.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost/healthz || exit 1
+    CMD wget -qO- http://127.0.0.1/healthz || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
