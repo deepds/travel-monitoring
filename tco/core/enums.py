@@ -211,6 +211,23 @@ class ClassificationStatus(StrEnum):
     UNCLASSIFIED_CAPACITY = "UNCLASSIFIED_CAPACITY"
 
 
+class OfferAttribute(StrEnum):
+    """Признаки предложения, которые источник может не сообщать.
+
+    Источник, который структурно не отдает признак, объявляет его в
+    ``Source.unreported_attributes``. Это свойство контракта источника, а не
+    результат конкретного сбора: отличать «источник не сообщает» от «не
+    удалось классифицировать» нужно, чтобы первое не снимало источник
+    с допуска по доле неклассифицированных предложений.
+    """
+
+    MEAL = "MEAL"
+    CANCELLATION = "CANCELLATION"
+    BAGGAGE = "BAGGAGE"
+    CAPACITY = "CAPACITY"
+    RAIL_CLASS = "RAIL_CLASS"
+
+
 class ExclusionReason(StrEnum):
     """Почему предложение не попало в агрегированный расчет."""
 

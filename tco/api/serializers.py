@@ -321,6 +321,7 @@ def source_full(item: Source) -> dict[str, Any]:
         **source_brief(item),
         "qualification_notes": item.qualification_notes,
         "qualified_at": _iso(item.qualified_at),
+        "unreported_attributes": list(item.unreported_attributes or []),
         "requires_credentials": item.requires_credentials,
         "allowed_hosts": list(item.allowed_hosts or []),
         "legal_status": item.legal_status,

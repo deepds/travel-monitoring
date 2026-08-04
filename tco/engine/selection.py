@@ -25,6 +25,7 @@ from tco.core.enums import (
     ComponentType,
     ExclusionReason,
     MealType,
+    OfferAttribute,
     OfferType,
     RailClass,
     StarsFilter,
@@ -79,6 +80,38 @@ class SelectionStats:
             "equivalence_groups": self.equivalence_groups,
             "filter_reasons": dict(sorted(self.filter_reasons.items())),
         }
+
+
+def unclassified_attributes(offer: Offer) -> frozenset[str]:
+    """Признаки предложения, оставшиеся неопределенными.
+
+    Считается по фактическим значениям, а не по ``classification_status``:
+    статус хранит только самую значимую проблему, а для разбора «чего именно
+    не хватает» нужен полный список.
+    """
+    found: set[str] = set()
+
+    if offer.offer_type == OfferType.FLIGHT.value:
+        flight = offer.flight
+        if flight is not None and flight.baggage_type == BaggageType.UNKNOWN.value:
+            found.add(OfferAttribute.BAGGAGE.value)
+        return frozenset(found)
+
+    if offer.offer_type == OfferType.RAIL.value:
+        rail = offer.rail
+        if rail is not None and rail.car_type is None:
+            found.add(OfferAttribute.RAIL_CLASS.value)
+        return frozenset(found)
+
+    accommodation = offer.accommodation
+    if accommodation is not None:
+        if accommodation.meal_type == MealType.UNKNOWN.value:
+            found.add(OfferAttribute.MEAL.value)
+        if accommodation.cancellation_type == CancellationType.UNKNOWN.value:
+            found.add(OfferAttribute.CANCELLATION.value)
+        if not accommodation.capacity_confirmed:
+            found.add(OfferAttribute.CAPACITY.value)
+    return frozenset(found)
 
 
 def component_of(offer: Offer) -> ComponentType:

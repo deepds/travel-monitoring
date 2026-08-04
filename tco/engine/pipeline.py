@@ -183,9 +183,12 @@ def calculate_run(payload: EngineInput) -> EngineResult:
     transport_by_source = _group_by_source(transport_offers)
     accommodation_by_source = _group_by_source(accommodation_offers)
 
-    transport_infos = _infos_for(payload.source_infos, transport_by_source, OfferType.FLIGHT)
+    # Транспортный компонент собирают два типа предложений — авиа и ЖД.
+    transport_infos = _infos_for(
+        payload.source_infos, transport_by_source, (OfferType.FLIGHT, OfferType.RAIL)
+    )
     accommodation_infos = _infos_for(
-        payload.source_infos, accommodation_by_source, OfferType.ACCOMMODATION
+        payload.source_infos, accommodation_by_source, (OfferType.ACCOMMODATION,)
     )
 
     transport = aggregate_component(
@@ -362,11 +365,19 @@ def _group_by_source(offers: Sequence[Offer]) -> dict[str, list[Offer]]:
 def _infos_for(
     source_infos: dict[str, SourceCollectionInfo],
     offers_by_source: dict[str, list[Offer]],
-    offer_type: OfferType,
+    offer_types: Sequence[OfferType],
 ) -> dict[str, SourceCollectionInfo]:
-    """Оставляет только источники, участвовавшие в сборе этого компонента."""
+    """Контекст источников, участвовавших в сборе этого компонента.
+
+    Контекст сужается до типов предложений компонента: технический итог
+    запроса проживания не должен влиять на допуск транспорта того же
+    источника, и наоборот.
+    """
+    wanted = {item.value for item in offer_types}
     keys = set(offers_by_source)
-    return {code: info for code, info in source_infos.items() if code in keys}
+    return {
+        code: info.scoped_to(wanted) for code, info in source_infos.items() if code in keys
+    }
 
 
 def _mark_ineligible_sources(offers: Sequence[Offer], aggregate: ComponentAggregate) -> None:

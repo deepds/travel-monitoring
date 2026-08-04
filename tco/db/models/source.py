@@ -40,6 +40,9 @@ class Source(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     protocol: Mapped[str] = mapped_column(String(16), default=SourceProtocol.REST.value, nullable=False)
     #: Какие типы предложений поставляет источник: FLIGHT / RAIL / ACCOMMODATION.
     offer_types: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    #: Признаки (``OfferAttribute``), которых нет в контракте источника. Их
+    #: отсутствие — известное свойство источника, а не сбой классификации.
+    unreported_attributes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
     qualification_status: Mapped[str] = mapped_column(
         String(16), default=SourceStatus.CANDIDATE.value, nullable=False

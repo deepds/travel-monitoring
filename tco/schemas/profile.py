@@ -40,6 +40,12 @@ class SourceEligibilityRules(BaseModel):
     max_data_age_minutes: int = Field(60, ge=1, le=100000)
     max_invalid_offer_ratio: float = Field(0.30, ge=0.0, le=1.0)
     max_unclassified_fare_ratio: float = Field(0.40, ge=0.0, le=1.0)
+    #: Засчитывать ли в долю неклассифицированных те признаки, которых нет в
+    #: контракте источника (``Source.unreported_attributes``). ``False`` не
+    #: смягчает фильтр сценария — предложение с неизвестным признаком
+    #: по-прежнему не выдается за соответствующее запросу; снимается только
+    #: наказание источника за то, чего он в принципе не сообщает.
+    count_unreported_as_unclassified: bool = True
     #: Минимум предложений, оставшихся после дедупликации и фильтрации.
     min_offers_after_dedup: int = Field(3, ge=1, le=1000)
     #: Требовать успешного технического завершения запроса.

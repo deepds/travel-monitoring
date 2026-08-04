@@ -15,7 +15,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tco.core.config import REPO_ROOT, Settings, get_settings
-from tco.core.enums import ProfileStatus, SourceCategory, SourceProtocol, SourceStatus, UserRole
+from tco.core.enums import (
+    OfferAttribute,
+    ProfileStatus,
+    SourceCategory,
+    SourceProtocol,
+    SourceStatus,
+    UserRole,
+)
 from tco.core.logging import get_logger
 from tco.core.security import generate_password, hash_password
 from tco.db.models.profile import CalculationProfile
@@ -169,6 +176,9 @@ def seed_sources(
         source.category = SourceCategory(entry["category"]).value
         source.protocol = SourceProtocol(entry.get("protocol", "REST")).value
         source.offer_types = list(entry.get("offer_types") or [])
+        source.unreported_attributes = [
+            OfferAttribute(item).value for item in entry.get("unreported_attributes") or []
+        ]
         source.qualification_status = SourceStatus(
             entry.get("qualification_status", "CANDIDATE")
         ).value

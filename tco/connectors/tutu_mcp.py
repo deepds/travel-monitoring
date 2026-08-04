@@ -98,6 +98,19 @@ ARG_ALIASES: dict[str, tuple[str, ...]] = {
 #: Ключи, под которыми в ответах встречается список предложений.
 OFFER_LIST_KEYS = ("offers", "items", "results", "data", "variants", "hotels", "list")
 
+#: Значения фильтра ``meals`` инструмента search_hotels. Завтрак задается
+#: отдельным аргументом ``breakfast_included`` — это документированный ярлык.
+TUTU_MEAL_FILTER: dict[str, str] = {
+    "NO_MEALS": "nomeal",
+    "HALF_BOARD": "halfboard",
+    "FULL_BOARD": "fullboard",
+    "ALL_INCLUSIVE": "allinclusive",
+}
+
+#: Питание, которое подтверждается самим фактом серверной фильтрации: источник
+#: не возвращает ``meal_name``, но отбирает предложения по запрошенному плану.
+MEAL_CONFIRMED_BY_QUERY: frozenset[str] = frozenset({"BREAKFAST", *TUTU_MEAL_FILTER})
+
 
 def _pick_arg(schema_properties: dict[str, Any], logical: str) -> str | None:
     """Выбирает реальное имя аргумента для логического поля."""
@@ -140,7 +153,25 @@ def _clamp_to_schema(value: Any, prop: dict[str, Any]) -> tuple[Any, str | None]
     return value, None
 
 
-def _coerce(value: Any, target_type: str) -> Any:
+def _array_item_type(prop: dict[str, Any]) -> str:
+    """Тип элементов массива с учетом ``anyOf``/``oneOf``."""
+    for variant in (prop, *(prop.get("anyOf") or []), *(prop.get("oneOf") or [])):
+        if not isinstance(variant, dict) or variant.get("type") != "array":
+            continue
+        items = variant.get("items")
+        if isinstance(items, dict) and items.get("type"):
+            return str(items["type"])
+    return "string"
+
+
+def _coerce(value: Any, target_type: str, prop: dict[str, Any] | None = None) -> Any:
+    if target_type == "array":
+        # Схема может требовать список там, где логически передается одно
+        # значение: ``stars`` у search_hotels объявлен как multi-select.
+        # Скаляр, отправленный как есть, отклоняется валидацией источника.
+        items = value if isinstance(value, (list, tuple)) else [value]
+        item_type = _array_item_type(prop or {})
+        return [_coerce(item, item_type) for item in items]
     if target_type == "integer":
         try:
             return int(value)
@@ -317,8 +348,9 @@ class TutuMcpConnector(BaseConnector):
         name = _pick_arg(props, logical)
         if name is None:
             return None
-        coerced = _coerce(value, _prop_type(props, name))
-        clamped, note = _clamp_to_schema(coerced, props.get(name) or {})
+        prop = props.get(name) or {}
+        coerced = _coerce(value, _prop_type(props, name), prop)
+        clamped, note = _clamp_to_schema(coerced, prop)
         if note:
             self.log.info(
                 "Аргумент приведен к границам схемы инструмента",
@@ -665,9 +697,12 @@ class TutuMcpConnector(BaseConnector):
             # и выборка для агрегации становится непригодно малой.
             stars_value = _stars_numeric(query.stars)
             if stars_value is not None:
-                self._set_arg(args, props, "stars", str(stars_value))
+                # Тип приводится по схеме: source ожидает список категорий.
+                self._set_arg(args, props, "stars", stars_value)
             if query.meal_type == "BREAKFAST":
                 self._set_arg(args, props, "breakfast_included", True)
+            elif query.meal_type in TUTU_MEAL_FILTER:
+                self._set_arg(args, props, "meals", [TUTU_MEAL_FILTER[query.meal_type]])
             if query.cancellation_filter == "FREE_CANCELLATION":
                 self._set_arg(args, props, "free_cancellation", True)
             self._set_arg(args, props, "per_page", int(self.context.config.get("per_page", 50)))
@@ -910,21 +945,24 @@ def _refund_text(conditions: dict[str, Any]) -> str | None:
 def _meal_text(best: dict[str, Any], requested_meal: str | None = None) -> str | None:
     """Определяет питание предложения.
 
-    Если поиск выполнялся с серверным фильтром по завтраку, выдача его и
+    Если поиск выполнялся с серверным фильтром по питанию, выдача его и
     подтверждает — так же, как поиск по составу гостей подтверждает
     вместимость. Без этого источник, не заполняющий ``meal_name``, давал бы
     сплошной ``UNKNOWN`` и предложения отсеивались бы фильтром профиля.
+
+    Возвращается код ``MealType``: ``classify_meal`` распознает его напрямую,
+    без разбора текста.
     """
     name = _first_str(best, "meal_name", "board_name")
     if name:
         return name
     included = best.get("breakfast_included")
     if included is True:
-        return "Завтрак"
+        return "BREAKFAST"
     if included is False:
-        return "Без питания"
-    if requested_meal == "BREAKFAST":
-        return "Завтрак"
+        return "NO_MEALS"
+    if requested_meal in MEAL_CONFIRMED_BY_QUERY:
+        return requested_meal
     return None
 
 

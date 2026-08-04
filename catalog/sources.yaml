@@ -12,6 +12,12 @@ sources:
     category: TRANSPORT
     protocol: MCP
     offer_types: [FLIGHT, RAIL, ACCOMMODATION]
+    # Выдача search_hotels не содержит плана питания: meal_name и
+    # breakfast_included приходят пустыми во всех объектах. Фильтровать по
+    # питанию источник умеет (аргументы meals / breakfast_included), поэтому
+    # запрошенный план подтверждается самим фактом серверной фильтрации,
+    # а без такого запроса питание остается неизвестным.
+    unreported_attributes: [MEAL]
     qualification_status: APPROVED
     is_enabled: true
     requires_credentials: false

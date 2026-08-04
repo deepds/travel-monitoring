@@ -1,0 +1,115 @@
+# Базовая методика MVP, версия 2.
+#
+# Отличия от 1.0.0 — два послабления, вызванные наблюдениями на живых
+# источниках. Оба зафиксированы отдельной версией: активная версия методики
+# неизменяема, а исторические расчеты должны остаться привязанными к 1.0.0.
+#
+#   1. `eligibility.count_unreported_as_unclassified: false`
+#      Источник больше не наказывается за признак, которого нет в его
+#      контракте (`Source.unreported_attributes`). Туту не возвращает план
+#      питания в выдаче отелей: 94 % предложений получали
+#      `UNCLASSIFIED_MEAL`, доля неклассифицированных доходила до 97 % при
+#      пороге 40 %, и источник снимался с расчета целиком — вместе с ценами,
+#      к качеству которых претензий нет.
+#      Послабление не касается фильтра сценария: предложение с неизвестным
+#      питанием по-прежнему не выдается за удовлетворяющее запросу
+#      «с завтраком», а сам факт неизвестности остается в карточке
+#      предложения, в объяснимости и снижает Scenario Confidence.
+#
+#   2. `eligibility.max_data_age_minutes: 60 → 120`
+#      При часовом наблюдении пачка из ~220 вызовов занимает около 11 минут
+#      по лимиту темпа, и расчет по последним сценариям упирался в границу
+#      окна: 173 предложения отброшены с «Данные устарели: 70 мин > 60 мин».
+#      120 минут оставляют запас, не выходя за интервал наблюдения вдвое.
+#
+# Остальные значения совпадают с 1.0.0.
+
+code: baseline
+name: Базовая методика MVP (версия 2)
+version: "2.0.0"
+description: >
+  Уточнение стартовой методики по итогам работы на живых источниках:
+  отсутствие признака в контракте источника не приравнивается к сбою
+  классификации, окно свежести данных расширено до двух часов.
+  Правила отбора, агрегации и пороги качества не изменились.
+
+rules:
+  filters:
+    require_base_currency: true
+    min_price: 1.0
+    max_price: null
+    require_capacity_confirmation: true
+    strict_baggage_classification: true
+    stars_exact_match: true
+    meal_at_least_requested: true
+    max_stops: null
+    enforce_cancellation_filter: true
+    allow_synthetic_sources: false
+
+  eligibility:
+    min_valid_offers: 5
+    max_data_age_minutes: 120
+    max_invalid_offer_ratio: 0.30
+    max_unclassified_fare_ratio: 0.40
+    count_unreported_as_unclassified: false
+    min_offers_after_dedup: 3
+    require_successful_call: true
+    min_source_confidence: null
+
+  outliers:
+    method: IQR
+    iqr_multiplier: 1.5
+    min_sample_size: 4
+    scope: PER_SOURCE
+    max_outlier_ratio: 0.4
+
+  aggregation:
+    per_source_statistic: MEDIAN
+    trim_ratio: 0.1
+    cross_source_method: MEDIAN_OF_MEDIANS
+    two_source_method: MEAN
+    percentile_method: LINEAR
+    high_disagreement_threshold: 0.30
+    allow_single_source: true
+
+  quality:
+    weights:
+      component_completeness: 0.30
+      source_count: 0.20
+      offer_count: 0.15
+      source_agreement: 0.15
+      freshness: 0.10
+      connector_stability: 0.10
+    partial_success_threshold: 60.0
+    target_source_count: 2
+    target_offer_count: 20
+    single_source_agreement_score: 0.5
+    default_connector_stability: 0.8
+    stability_window_days: 30
+
+  confidence:
+    high_min_quality: 80.0
+    medium_min_quality: 60.0
+    low_min_quality: 40.0
+    high_min_sources_per_component: 2
+    high_max_disagreement: 0.15
+    high_min_source_confidence: 60.0
+    max_unclassified_ratio: 0.40
+
+  limits:
+    source_soft_timeout_seconds: 20.0
+    source_hard_timeout_seconds: 30.0
+    on_demand_total_timeout_seconds: 60.0
+    max_retries: 2
+    max_offers_per_source: 300
+    result_cache_ttl_minutes: 45
+
+  transport_pricing:
+    rail_child_fare_ratio: 1.0
+    rail_child_max_age: 9
+    max_roundtrip_combinations: 64
+    roundtrip_legs_per_direction: 8
+
+  allowed_source_codes: []
+  excluded_source_codes: []
+  rounding_digits: 0

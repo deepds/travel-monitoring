@@ -8,14 +8,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
-from typing import Sequence
+from typing import Collection, Sequence
 
 from tco.core.enums import ComponentType, ConnectorOutcome, ExclusionReason
 from tco.core.utils import minutes_between, to_decimal, utcnow
 from tco.db.models.offer import Offer
+from tco.engine.selection import unclassified_attributes
 from tco.engine.statistics import (
     Distribution,
     describe,
@@ -47,6 +48,40 @@ class SourceCollectionInfo:
     confidence_score: float | None = None
     error_code: str | None = None
     error_message: str | None = None
+    #: Признаки, которые источник структурно не сообщает (``MEAL`` и т. п.).
+    unreported_attributes: frozenset[str] = frozenset()
+    #: Разрез по типам предложений. Один источник поставляет и транспорт, и
+    #: проживание, а допуск проверяется для каждого компонента отдельно.
+    by_offer_type: dict[str, "SourceCollectionInfo"] = field(default_factory=dict)
+
+    def scoped_to(self, offer_types: Collection[str]) -> "SourceCollectionInfo":
+        """Контекст, ограниченный типами предложений одного компонента.
+
+        Неудачный запрос одного типа не должен снимать источник с допуска по
+        другому: иначе сломанный поиск проживания обнуляет успешно собранные
+        авиапредложения того же источника.
+        """
+        parts = [info for kind, info in self.by_offer_type.items() if kind in offer_types]
+        if not parts:
+            return self
+
+        failed = [info for info in parts if not info.outcome.is_ok]
+        leading = failed[0] if failed else parts[0]
+        return replace(
+            self,
+            outcome=leading.outcome,
+            # Возраст данных считается по самой старой части компонента.
+            collected_at=min(info.collected_at for info in parts),
+            latency_ms=max((info.latency_ms or 0) for info in parts) or None,
+            raw_offer_count=sum(info.raw_offer_count for info in parts),
+            normalized_offer_count=sum(info.normalized_offer_count for info in parts),
+            invalid_offer_count=sum(info.invalid_offer_count for info in parts),
+            unclassified_offer_count=sum(info.unclassified_offer_count for info in parts),
+            duplicate_offer_count=sum(info.duplicate_offer_count for info in parts),
+            error_code=leading.error_code,
+            error_message=leading.error_message,
+            by_offer_type={},
+        )
 
 
 @dataclass(slots=True)
@@ -198,10 +233,19 @@ def check_eligibility(
                 f"Доля невалидных записей {invalid_ratio:.0%} > "
                 f"{eligibility.max_invalid_offer_ratio:.0%}"
             )
-        unclassified_ratio = (
-            sum(1 for offer in all_source_offers if offer.classification_status != "CLASSIFIED")
-            / total
-        )
+        unclassified = [
+            offer for offer in all_source_offers if offer.classification_status != "CLASSIFIED"
+        ]
+        if not eligibility.count_unreported_as_unclassified and info.unreported_attributes:
+            # Источник не наказывается за признак, которого нет в его
+            # контракте: остаются только те предложения, где не определено
+            # что-то сверх заранее известных пробелов.
+            unclassified = [
+                offer
+                for offer in unclassified
+                if unclassified_attributes(offer) - info.unreported_attributes
+            ]
+        unclassified_ratio = len(unclassified) / total
         if unclassified_ratio > eligibility.max_unclassified_fare_ratio:
             reasons.append(
                 f"Доля неклассифицированных предложений {unclassified_ratio:.0%} > "

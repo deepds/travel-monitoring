@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Sequence
 
@@ -300,6 +300,8 @@ def build_source_infos(
     ).all()
     confidence = source_confidence_map(session)
 
+    unreported = unreported_attributes_map(session)
+
     infos: dict[str, SourceCollectionInfo] = {}
     for row in rows:
         existing = infos.get(row.source_code)
@@ -318,11 +320,15 @@ def build_source_infos(
             confidence_score=confidence.get(row.source_code),
             error_code=row.error_code,
             error_message=row.error_message,
+            unreported_attributes=unreported.get(row.source_code, frozenset()),
         )
-        # Один источник может отдавать и транспорт, и проживание: агрегируем
-        # счетчики и оставляем худший исход.
+        # Один источник может отдавать и транспорт, и проживание. Сводный
+        # объект хранит худший исход и суммарные счетчики — он нужен для
+        # статуса расчета; разрез по типам сохраняется рядом, потому что
+        # допуск к компоненту проверяется отдельно (см. ``scoped_to``).
         if existing is None:
-            infos[row.source_code] = info
+            existing = replace(info, by_offer_type={})
+            infos[row.source_code] = existing
         else:
             existing.raw_offer_count += info.raw_offer_count
             existing.normalized_offer_count += info.normalized_offer_count
@@ -330,7 +336,18 @@ def build_source_infos(
             existing.unclassified_offer_count += info.unclassified_offer_count
             if existing.outcome.is_ok and not info.outcome.is_ok:
                 existing.outcome = info.outcome
+        existing.by_offer_type[row.offer_type] = info
     return infos
+
+
+def unreported_attributes_map(session: Session) -> dict[str, frozenset[str]]:
+    """Признаки, которые источники структурно не сообщают.
+
+    Объявляются в реестре источников: это свойство контракта источника, а не
+    результат конкретного сбора.
+    """
+    rows = session.execute(select(Source.code, Source.unreported_attributes)).all()
+    return {code: frozenset(values or ()) for code, values in rows}
 
 
 def calculate_from_snapshot(
