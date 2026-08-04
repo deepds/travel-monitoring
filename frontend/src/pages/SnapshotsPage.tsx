@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import type { SnapshotBrief } from '@/api/types';
-import { AsyncBlock, PageTitle, SyntheticTag } from '@/components/common';
+import { AsyncBlock, PageTitle } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
 import { SNAPSHOT_STATUS_LABEL, SNAPSHOT_TYPE_LABEL, dateTime, labelOf, num } from '@/utils/format';
 
@@ -133,12 +133,8 @@ export default function SnapshotsPage() {
               {
                 title: '',
                 key: 'flags',
-                render: (_, row) => (
-                  <Space>
-                    <SyntheticTag visible={row.contains_synthetic_data} />
-                    {!row.offers_available ? <Tag color="default">предложения очищены</Tag> : null}
-                  </Space>
-                ),
+                render: (_, row) =>
+                  row.offers_available ? null : <Tag color="default">предложения очищены</Tag>,
               },
             ]}
           />

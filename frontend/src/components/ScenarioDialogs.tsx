@@ -22,13 +22,16 @@ import { num } from '@/utils/format';
 
 const { Text, Paragraph } = Typography;
 
+/** Значение «компонента не наблюдается» в выпадающих списках. */
+const NONE = 'NONE';
+
 interface FormValues {
   origin_city_code: string;
   destination_city_code: string;
   dates: [Dayjs, Dayjs];
   adults: number;
   children_ages?: number[];
-  transport_type: 'AVIA' | 'RAIL';
+  transport_type: 'AVIA' | 'RAIL' | typeof NONE;
   flight_fare_type?: string;
   rail_class?: string;
   accommodation_type: string;
@@ -76,14 +79,26 @@ export function ScenarioCreateModal({ open, onClose, onCreated }: CreateProps) {
   const asOptions = (items?: { value: string; label: string }[]) =>
     (items ?? []).map((item) => ({ value: item.value, label: item.label }));
 
+  // Сценарий не обязан следить за поездкой целиком: можно наблюдать только
+  // перелет или только проживание. Пустым состав быть не может — тогда
+  // измерять нечего.
+  const watchesTransport = transport !== NONE;
+  const watchesStay = accommodation !== NONE;
+
   // Звездность применима не ко всякому размещению: для хостела или апартаментов
   // справочник отдает NOT_APPLICABLE, и требовать категорию нельзя.
-  const starsApplicable = accommodation === 'HOTEL' || accommodation === 'SANATORIUM';
+  const starsApplicable =
+    watchesStay && (accommodation === 'HOTEL' || accommodation === 'SANATORIUM');
 
   useEffect(() => {
     if (!starsApplicable) form.setFieldValue('stars', 'NOT_APPLICABLE');
     else if (form.getFieldValue('stars') === 'NOT_APPLICABLE') form.setFieldValue('stars', 'ANY');
   }, [starsApplicable]);
+
+  // Перекрестная проверка: снятие одной компоненты обязывает вторую остаться.
+  useEffect(() => {
+    form.validateFields(['transport_type', 'accommodation_type']).catch(() => undefined);
+  }, [watchesTransport, watchesStay]);
 
   const maxDate = horizon.data?.max_supported_date
     ? dayjs(horizon.data.max_supported_date as string)
@@ -93,6 +108,8 @@ export function ScenarioCreateModal({ open, onClose, onCreated }: CreateProps) {
     setSubmitting(true);
     try {
       const [departure, back] = values.dates;
+      const observesTransport = values.transport_type !== NONE;
+      const observesStay = values.accommodation_type !== NONE;
       const created = await api.createScenario({
         origin_city_code: values.origin_city_code,
         destination_city_code: values.destination_city_code,
@@ -100,13 +117,14 @@ export function ScenarioCreateModal({ open, onClose, onCreated }: CreateProps) {
         return_date: back.format('YYYY-MM-DD'),
         adults: values.adults,
         children_ages: values.children_ages ?? [],
-        transport_type: values.transport_type,
+        // `null` — компонента не наблюдается.
+        transport_type: observesTransport ? values.transport_type : null,
         flight_fare_type: values.transport_type === 'AVIA' ? values.flight_fare_type : null,
         rail_class: values.transport_type === 'RAIL' ? values.rail_class : null,
-        accommodation_type: values.accommodation_type,
-        stars: values.stars,
-        meal_type: values.meal_type,
-        cancellation_filter: values.cancellation_filter,
+        accommodation_type: observesStay ? values.accommodation_type : null,
+        stars: observesStay ? values.stars : 'ANY',
+        meal_type: observesStay ? values.meal_type : 'ANY',
+        cancellation_filter: observesStay ? values.cancellation_filter : 'ANY',
         name: values.name?.trim() || null,
         scenario_type: 'MONITORING',
       });
@@ -261,17 +279,32 @@ export function ScenarioCreateModal({ open, onClose, onCreated }: CreateProps) {
 
         <Row gutter={12}>
           <Col xs={24} sm={12}>
-            <Form.Item name="transport_type" label="Транспорт" rules={[{ required: true }]}>
+            <Form.Item
+              name="transport_type"
+              label="Транспорт"
+              dependencies={['accommodation_type']}
+              rules={[
+                ({ getFieldValue }) => ({
+                  validator: (_, value) =>
+                    value === NONE && getFieldValue('accommodation_type') === NONE
+                      ? Promise.reject(
+                          new Error('Нужна хотя бы одна компонента: транспорт или размещение'),
+                        )
+                      : Promise.resolve(),
+                }),
+              ]}
+            >
               <Select
                 options={[
                   { value: 'AVIA', label: 'Авиа' },
                   { value: 'RAIL', label: 'Железная дорога' },
+                  { value: NONE, label: 'Нет — не наблюдать' },
                 ]}
               />
             </Form.Item>
           </Col>
           <Col xs={24} sm={12}>
-            {transport === 'AVIA' ? (
+            {!watchesTransport ? null : transport === 'AVIA' ? (
               <Form.Item
                 name="flight_fare_type"
                 label="Тариф"
@@ -293,49 +326,84 @@ export function ScenarioCreateModal({ open, onClose, onCreated }: CreateProps) {
 
         <Row gutter={12}>
           <Col xs={24} sm={12}>
-            <Form.Item name="accommodation_type" label="Размещение" rules={[{ required: true }]}>
+            <Form.Item
+              name="accommodation_type"
+              label="Размещение"
+              dependencies={['transport_type']}
+              rules={[
+                ({ getFieldValue }) => ({
+                  validator: (_, value) =>
+                    value === NONE && getFieldValue('transport_type') === NONE
+                      ? Promise.reject(
+                          new Error('Нужна хотя бы одна компонента: транспорт или размещение'),
+                        )
+                      : Promise.resolve(),
+                }),
+              ]}
+            >
               <Select
-                options={asOptions(accommodationTypes.data?.items)}
+                options={[
+                  ...asOptions(accommodationTypes.data?.items),
+                  { value: NONE, label: 'Нет — не наблюдать' },
+                ]}
                 loading={accommodationTypes.loading}
               />
             </Form.Item>
           </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item
-              name="stars"
-              label="Звездность"
-              extra={
-                !starsApplicable ? (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    Для этого типа размещения звезды неприменимы
-                  </Text>
-                ) : null
-              }
-            >
-              <Select
-                options={asOptions(starsRef.data?.items)}
-                loading={starsRef.loading}
-                disabled={!starsApplicable}
-              />
-            </Form.Item>
-          </Col>
+          {watchesStay ? (
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="stars"
+                label="Звездность"
+                extra={
+                  !starsApplicable ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Для этого типа размещения звезды неприменимы
+                    </Text>
+                  ) : null
+                }
+              >
+                <Select
+                  options={asOptions(starsRef.data?.items)}
+                  loading={starsRef.loading}
+                  disabled={!starsApplicable}
+                />
+              </Form.Item>
+            </Col>
+          ) : null}
         </Row>
 
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item name="meal_type" label="Питание">
-              <Select options={asOptions(meals.data?.items)} loading={meals.loading} />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item name="cancellation_filter" label="Условия отмены">
-              <Select
-                options={asOptions(cancellations.data?.items)}
-                loading={cancellations.loading}
-              />
-            </Form.Item>
-          </Col>
-        </Row>
+        {watchesStay ? (
+          <Row gutter={12}>
+            <Col xs={24} sm={12}>
+              <Form.Item name="meal_type" label="Питание">
+                <Select options={asOptions(meals.data?.items)} loading={meals.loading} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item name="cancellation_filter" label="Условия отмены">
+                <Select
+                  options={asOptions(cancellations.data?.items)}
+                  loading={cancellations.loading}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+        ) : null}
+
+        {!watchesTransport || !watchesStay ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={
+              watchesTransport
+                ? 'Сценарий наблюдает только транспорт'
+                : 'Сценарий наблюдает только проживание'
+            }
+            description="Итоговая стоимость будет равна этой компоненте, а не стоимости поездки целиком. Такие сценарии не сопоставимы с полными на дашборде."
+          />
+        ) : null}
 
         <Row gutter={12}>
           <Col xs={24} sm={16}>

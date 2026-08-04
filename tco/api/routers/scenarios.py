@@ -76,10 +76,12 @@ class ScenarioCreate(BaseModel):
     return_date: date
     adults: int = Field(2, ge=1, le=9)
     children_ages: list[int] = Field(default_factory=list, max_length=8)
-    transport_type: TransportType = TransportType.AVIA
+    #: ``None`` — компонента сценарием не наблюдается. Хотя бы одна из двух
+    #: обязана остаться: сценарий без компонент ничего не измеряет.
+    transport_type: TransportType | None = TransportType.AVIA
     flight_fare_type: FlightFareType | None = FlightFareType.CHEAPEST
     rail_class: RailClass | None = None
-    accommodation_type: AccommodationType = AccommodationType.HOTEL
+    accommodation_type: AccommodationType | None = AccommodationType.HOTEL
     stars: StarsFilter = StarsFilter.ANY
     meal_type: MealType = MealType.ANY
     cancellation_filter: CancellationFilter = CancellationFilter.ANY
@@ -100,6 +102,10 @@ class ScenarioCreate(BaseModel):
             raise ValueError("Дата возвращения должна быть позже даты отправления")
         if any(age < 0 or age > 17 for age in self.children_ages):
             raise ValueError("Возраст ребенка должен быть в диапазоне 0–17")
+        if self.transport_type is None and self.accommodation_type is None:
+            raise ValueError(
+                "Сценарий должен наблюдать хотя бы одну компоненту: транспорт или проживание"
+            )
         if self.transport_type == TransportType.RAIL and self.rail_class is None:
             raise ValueError("Для железнодорожного транспорта требуется класс вагона")
         if self.transport_type == TransportType.AVIA and self.flight_fare_type is None:

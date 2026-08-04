@@ -56,13 +56,13 @@ class TravelScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: семейном шаблоне в UI (SCOPE-R C §4).
     children_ages: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
-    transport_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: ``NULL`` — компонента сценарием не наблюдается. Хотя бы одна из двух
+    #: обязана быть заполнена: сценарий без компонент ничего не измеряет.
+    transport_type: Mapped[str | None] = mapped_column(String(8))
     flight_fare_type: Mapped[str | None] = mapped_column(String(24))
     rail_class: Mapped[str | None] = mapped_column(String(24))
 
-    accommodation_type: Mapped[str] = mapped_column(
-        String(24), default=AccommodationType.HOTEL.value, nullable=False
-    )
+    accommodation_type: Mapped[str | None] = mapped_column(String(24))
     stars: Mapped[str] = mapped_column(String(16), default=StarsFilter.ANY.value, nullable=False)
     meal_type: Mapped[str] = mapped_column(String(16), default=MealType.ANY.value, nullable=False)
     cancellation_filter: Mapped[str] = mapped_column(
@@ -96,12 +96,20 @@ class TravelScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         return int(self.adults) + len(self.children_ages or [])
 
     @property
-    def transport_type_enum(self) -> TransportType:
-        return TransportType(self.transport_type)
+    def transport_type_enum(self) -> TransportType | None:
+        return TransportType(self.transport_type) if self.transport_type else None
 
     @property
-    def accommodation_type_enum(self) -> AccommodationType:
-        return AccommodationType(self.accommodation_type)
+    def accommodation_type_enum(self) -> AccommodationType | None:
+        return AccommodationType(self.accommodation_type) if self.accommodation_type else None
+
+    @property
+    def observes_transport(self) -> bool:
+        return self.transport_type is not None
+
+    @property
+    def observes_accommodation(self) -> bool:
+        return self.accommodation_type is not None
 
     @property
     def stars_enum(self) -> StarsFilter:

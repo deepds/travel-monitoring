@@ -9,7 +9,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError, api } from '@/api/client';
 import type { Offer, RunBrief, SnapshotSourceRow } from '@/api/types';
 import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
+  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag,
 } from '@/components/common';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
@@ -120,9 +120,6 @@ export default function SnapshotDetailPage() {
                   {data?.created_by ?? '—'} · {dateTime(data?.created_at)}
                 </Descriptions.Item>
               </Descriptions>
-              <div style={{ marginTop: 12 }}>
-                <SyntheticTag visible={Boolean(data?.contains_synthetic_data)} />
-              </div>
             </Card>
           </Col>
 

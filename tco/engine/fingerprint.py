@@ -24,7 +24,13 @@ from tco.core.utils import floor_to_bucket, stable_hash, utcnow
 
 @dataclass(frozen=True, slots=True)
 class ScenarioKey:
-    """Бизнес-параметры сценария, определяющие его тождественность."""
+    """Бизнес-параметры сценария, определяющие его тождественность.
+
+    ``transport_type`` и ``accommodation_type`` допускают ``None`` — это
+    означает, что компонента сценарием не наблюдается. Наблюдение только за
+    транспортом и наблюдение за поездкой целиком — разные сценарии, поэтому
+    состав входит в отпечаток.
+    """
 
     origin_city_code: str
     destination_city_code: str
@@ -32,15 +38,20 @@ class ScenarioKey:
     return_date: date
     adults: int
     children_ages: tuple[int, ...]
-    transport_type: TransportType
+    transport_type: TransportType | None
     flight_fare_type: FlightFareType | None
     rail_class: RailClass | None
-    accommodation_type: AccommodationType
+    accommodation_type: AccommodationType | None
     stars: StarsFilter
     meal_type: MealType
     cancellation_filter: CancellationFilter
 
     def as_dict(self) -> dict:
+        # Параметры ненаблюдаемой компоненты не влияют на тождественность:
+        # сценарий «только транспорт» одинаков независимо от того, какая
+        # звездность осталась в неиспользуемом поле.
+        observes_transport = self.transport_type is not None
+        observes_accommodation = self.accommodation_type is not None
         return {
             "origin": self.origin_city_code,
             "destination": self.destination_city_code,
@@ -48,7 +59,7 @@ class ScenarioKey:
             "return_date": self.return_date.isoformat(),
             "adults": int(self.adults),
             "children_ages": sorted(int(age) for age in self.children_ages),
-            "transport_type": str(self.transport_type),
+            "transport_type": str(self.transport_type) if observes_transport else None,
             # Тариф значим только для соответствующего вида транспорта: сценарий
             # AVIA с заполненным rail_class тождественен тому же без него.
             "flight_fare_type": (
@@ -61,10 +72,14 @@ class ScenarioKey:
                 if self.transport_type == TransportType.RAIL and self.rail_class
                 else None
             ),
-            "accommodation_type": str(self.accommodation_type),
-            "stars": str(self.stars),
-            "meal_type": str(self.meal_type),
-            "cancellation_filter": str(self.cancellation_filter),
+            "accommodation_type": (
+                str(self.accommodation_type) if observes_accommodation else None
+            ),
+            "stars": str(self.stars) if observes_accommodation else None,
+            "meal_type": str(self.meal_type) if observes_accommodation else None,
+            "cancellation_filter": (
+                str(self.cancellation_filter) if observes_accommodation else None
+            ),
         }
 
 

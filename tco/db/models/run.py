@@ -65,6 +65,9 @@ class ScenarioRun(UUIDPrimaryKeyMixin, Base):
     transport_p25: Mapped[Decimal | None] = mapped_column(Money)
     transport_median: Mapped[Decimal | None] = mapped_column(Money)
     transport_p75: Mapped[Decimal | None] = mapped_column(Money)
+    #: Фактический размах допущенных предложений, а не устойчивая оценка.
+    transport_min: Mapped[Decimal | None] = mapped_column(Money)
+    transport_max: Mapped[Decimal | None] = mapped_column(Money)
     transport_source_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     transport_offer_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     transport_disagreement: Mapped[float | None] = mapped_column(Float)
@@ -72,6 +75,8 @@ class ScenarioRun(UUIDPrimaryKeyMixin, Base):
     hotel_p25: Mapped[Decimal | None] = mapped_column(Money)
     hotel_median: Mapped[Decimal | None] = mapped_column(Money)
     hotel_p75: Mapped[Decimal | None] = mapped_column(Money)
+    hotel_min: Mapped[Decimal | None] = mapped_column(Money)
+    hotel_max: Mapped[Decimal | None] = mapped_column(Money)
     hotel_source_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     hotel_offer_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     hotel_disagreement: Mapped[float | None] = mapped_column(Float)
@@ -80,6 +85,11 @@ class ScenarioRun(UUIDPrimaryKeyMixin, Base):
     total_estimated_cost: Mapped[Decimal | None] = mapped_column(Money)
     total_p25: Mapped[Decimal | None] = mapped_column(Money)
     total_p75: Mapped[Decimal | None] = mapped_column(Money)
+    #: Сумма границ компонент. Для размаха это точная граница комбинаций:
+    #: компоненты выбираются независимо, поэтому самая дешевая пара и есть
+    #: сумма самых дешевых. Для медианы такое равенство не выполняется.
+    total_min: Mapped[Decimal | None] = mapped_column(Money)
+    total_max: Mapped[Decimal | None] = mapped_column(Money)
     price_per_person: Mapped[Decimal | None] = mapped_column(Money)
     transport_share: Mapped[float | None] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String(3), default="RUB", nullable=False)

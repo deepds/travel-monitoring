@@ -245,6 +245,7 @@ export const EXCLUSION_LABEL: Record<string, string> = {
 
 /** Причины отсева предложения фильтром профиля. */
 export const FILTER_REASON_LABEL: Record<string, string> = {
+  COMPONENT_NOT_OBSERVED: 'Компонента не наблюдается сценарием',
   TRANSPORT_TYPE_MISMATCH: 'Не тот вид транспорта',
   MISSING_FLIGHT_DETAIL: 'Нет деталей авиаперелета',
   BAGGAGE_UNCLASSIFIED: 'Багаж не классифицирован',

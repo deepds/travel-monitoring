@@ -152,7 +152,7 @@ def build_queries(
         return_date=scenario.return_date,
         adults=scenario.adults,
         children_ages=tuple(scenario.children_ages or []),
-        transport_type=TransportType(scenario.transport_type),
+        transport_type=scenario.transport_type_enum,
         origin_source_ids=_source_ids(origin, source.code),
         destination_source_ids=_source_ids(destination, source.code),
         origin_latitude=origin.latitude,
@@ -231,7 +231,10 @@ def collect_all(
 # --------------------------------------------------------------------------- #
 
 
-def transport_offer_type_for(scenario: TravelScenario) -> OfferType:
+def transport_offer_type_for(scenario: TravelScenario) -> OfferType | None:
+    """Тип транспортных предложений сценария; ``None`` — транспорт не наблюдается."""
+    if scenario.transport_type is None:
+        return None
     return (
         OfferType.FLIGHT
         if scenario.transport_type == TransportType.AVIA.value
@@ -592,12 +595,23 @@ def build_snapshot(
     if not shell.created:
         return shell
 
+    # Собираются только наблюдаемые компоненты: к источникам за той, которую
+    # сценарий не запрашивал, обращаться незачем.
+    offer_types = tuple(
+        item
+        for item in (
+            transport_offer_type_for(scenario),
+            OfferType.ACCOMMODATION if scenario.observes_accommodation else None,
+        )
+        if item is not None
+    )
+
     collected = collect_into_snapshot(
         session,
         shell.snapshot,
         scenario,
         rules=rules,
-        offer_types=(transport_offer_type_for(scenario), OfferType.ACCOMMODATION),
+        offer_types=offer_types,
         settings=settings,
         raw_store=raw_store,
     )
@@ -774,8 +788,8 @@ def _normalize_result(
         source_id=source.id,
         source_code=source.code,
         connector_version=result.connector_version,
-        transport_type=TransportType(scenario.transport_type),
-        accommodation_type=AccommodationType(scenario.accommodation_type),
+        transport_type=scenario.transport_type_enum,
+        accommodation_type=scenario.accommodation_type_enum,
         departure_date=scenario.departure_date,
         return_date=scenario.return_date,
         adults=scenario.adults,

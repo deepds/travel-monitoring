@@ -106,8 +106,9 @@ export interface ScenarioBrief {
   departure_date: string;
   return_date: string;
   nights: number;
-  transport_type: TransportType;
-  accommodation_type: AccommodationType;
+  /** `null` — компонента сценарием не наблюдается. */
+  transport_type: TransportType | null;
+  accommodation_type: AccommodationType | null;
   stars: string;
   is_active: boolean;
 }
@@ -146,6 +147,8 @@ export interface ComponentStats {
   p25: number | null;
   median: number | null;
   p75: number | null;
+  min: number | null;
+  max: number | null;
   source_count: number;
   offer_count: number;
   disagreement: number | null;
@@ -165,6 +168,11 @@ export interface RunBrief {
   completed_at: string | null;
   lead_time_days: number;
   total_estimated_cost: number | null;
+  total_p25: number | null;
+  total_p75: number | null;
+  /** Фактический размах допущенных предложений, не устойчивая оценка. */
+  total_min: number | null;
+  total_max: number | null;
   price_per_person: number | null;
   currency: string;
   quality_score: number | null;
@@ -184,6 +192,8 @@ export interface Run extends RunBrief {
     estimated_cost: number | null;
     p25: number | null;
     p75: number | null;
+    min: number | null;
+    max: number | null;
     price_per_person: number | null;
     transport_share: number | null;
   };
@@ -401,6 +411,8 @@ export interface DirectionRow {
   median_hotel?: number | null;
   p25?: number | null;
   p75?: number | null;
+  min?: number | null;
+  max?: number | null;
   change_1d?: number | null;
   change_7d?: number | null;
   change_30d?: number | null;

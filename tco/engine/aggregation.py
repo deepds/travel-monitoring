@@ -153,6 +153,11 @@ class ComponentAggregate:
     outlier_offer_count: int
     unclassified_offer_count: int
     contains_synthetic: bool = False
+    #: Границы наблюдавшихся цен. В отличие от перцентилей это не устойчивая
+    #: оценка, а фактический размах выборки: самое дешевое и самое дорогое
+    #: допущенное предложение среди всех пригодных источников.
+    minimum: Decimal | None = None
+    maximum: Decimal | None = None
 
     @property
     def is_available(self) -> bool:
@@ -166,9 +171,11 @@ class ComponentAggregate:
         return {
             "component": self.component.value,
             "available": self.is_available,
+            "min": _decimal_out(self.minimum),
             "p25": _decimal_out(self.p25),
             "median": _decimal_out(self.median),
             "p75": _decimal_out(self.p75),
+            "max": _decimal_out(self.maximum),
             "source_count": self.source_count,
             "eligible_sources": self.eligible_source_codes,
             "disagreement": _round(self.disagreement, 4),
@@ -406,11 +413,25 @@ def aggregate_component(
         if combined_p75 is not None:
             combined_p75 = max(combined_p75, combined_median)
 
+    # Размах объединяется не так, как перцентили: медиана минимумов ничего не
+    # значила бы, а границей выборки является самое дешевое и самое дорогое
+    # предложение среди всех допущенных источников.
+    source_minimums = [
+        item.distribution.min for item in eligible if item.distribution.min is not None
+    ]
+    source_maximums = [
+        item.distribution.max for item in eligible if item.distribution.max is not None
+    ]
+    combined_min = min(source_minimums) if source_minimums else None
+    combined_max = max(source_maximums) if source_maximums else None
+
     return ComponentAggregate(
         component=component,
         p25=_to_money(combined_p25),
         median=_to_money(combined_median),
         p75=_to_money(combined_p75),
+        minimum=_to_money(combined_min),
+        maximum=_to_money(combined_max),
         source_aggregates=source_aggregates,
         eligible_source_codes=[item.source_code for item in eligible],
         disagreement=relative_disagreement(medians),

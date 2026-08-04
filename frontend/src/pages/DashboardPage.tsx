@@ -1,4 +1,4 @@
-import { Alert, Card, Col, Row, Segmented, Table, Tag, Typography } from 'antd';
+import { Card, Col, Row, Segmented, Table, Tag, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -6,13 +6,16 @@ import { Link } from 'react-router-dom';
 import { api } from '@/api/client';
 import type { DirectionRow } from '@/api/types';
 import {
-  AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle,
+  AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle, PriceRange,
 } from '@/components/common';
+import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
 import { useAsync } from '@/hooks/useAsync';
 import { dateTime, money, num, percent, score, TRANSPORT_LABEL } from '@/utils/format';
-import { AVG_QUALITY_SCORE_HINT, QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
+import {
+  AVG_QUALITY_SCORE_HINT, MIN_MAX_HINT, P25_P75_HINT, QUALITY_SCORE_SHORT_HINT,
+} from '@/utils/hints';
 
 const { Text } = Typography;
 
@@ -38,6 +41,8 @@ export default function DashboardPage() {
   const trendOption = useMemo(
     () => ({
       tooltip: { trigger: 'axis' },
+      // Границы размаха скрыты из легенды: это не самостоятельные ряды, а
+      // коридор вокруг итога, и включать их отдельно нечего.
       legend: { data: ['Итого', 'Транспорт', 'Проживание'], bottom: 0 },
       grid: { left: 60, right: 24, top: 24, bottom: 48 },
       xAxis: { type: 'category', data: points.map((p) => p.period ?? p.date ?? p.key) },
@@ -49,7 +54,12 @@ export default function DashboardPage() {
           smooth: true,
           data: points.map((p) => p.median_total),
           lineStyle: { width: 3 },
+          color: TOTAL_COLOR,
         },
+        ...rangeSeries(
+          points.map((p) => p.min),
+          points.map((p) => p.max),
+        ),
         { name: 'Транспорт', type: 'line', smooth: true, data: points.map((p) => p.median_transport) },
         { name: 'Проживание', type: 'line', smooth: true, data: points.map((p) => p.median_hotel) },
       ],
@@ -95,13 +105,19 @@ export default function DashboardPage() {
       render: (value: number | null) => <b>{money(value)}</b>,
     },
     {
-      title: 'P25–P75',
+      title: <LabelWithHint text="P25 – P75" hint={P25_P75_HINT} />,
+      key: 'iqr',
+      align: 'right' as const,
+      render: (_: unknown, row: DirectionRow) => (
+        <PriceRange low={row.p25 as number} high={row.p75 as number} />
+      ),
+    },
+    {
+      title: <LabelWithHint text="min – max" hint={MIN_MAX_HINT} />,
       key: 'range',
       align: 'right' as const,
       render: (_: unknown, row: DirectionRow) => (
-        <Text type="secondary">
-          {money(row.p25 as number)} — {money(row.p75 as number)}
-        </Text>
+        <PriceRange low={row.min as number} high={row.max as number} />
       ),
     },
     {
@@ -165,16 +181,6 @@ export default function DashboardPage() {
       />
 
       <MetricDisclaimer text={data?.disclaimer as string | undefined} />
-
-      {data?.contains_synthetic ? (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="В выборку попали расчеты с синтетическими данными"
-          description="Они помечены отдельно и не являются наблюдением реального рынка."
-        />
-      ) : null}
 
       <DashboardFilterBar value={filters} onChange={setFilters} />
 

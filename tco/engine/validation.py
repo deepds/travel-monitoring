@@ -225,7 +225,10 @@ def validate_scenario(
         )
 
     # --- Горизонт источников -------------------------------------------- #
-    if horizon is not None:
+    # Горизонт проверяется только у наблюдаемых компонент: отсутствие
+    # источника проживания не должно отклонять сценарий, который следит
+    # исключительно за перелетом.
+    if horizon is not None and scenario.transport_type is not None:
         if not horizon.has_transport:
             result.add_error(
                 "NO_TRANSPORT_SOURCE",
@@ -242,6 +245,7 @@ def validate_scenario(
                 "departure_date",
             )
 
+    if horizon is not None and scenario.accommodation_type is not None:
         if not horizon.has_accommodation:
             result.add_error(
                 "NO_ACCOMMODATION_SOURCE",
@@ -259,7 +263,11 @@ def validate_scenario(
             )
 
     # --- Транспорт ------------------------------------------------------- #
-    if scenario.transport_type == TransportType.AVIA:
+    if scenario.transport_type is None:
+        # Компонента не наблюдается: тариф, класс вагона и поддержка городов
+        # проверке не подлежат — их просто нет в этом сценарии.
+        pass
+    elif scenario.transport_type == TransportType.AVIA:
         if scenario.flight_fare_type is None:
             result.add_error(
                 "MISSING_FARE_TYPE", "Для авиаперелета не задан авиатариф", "flight_fare_type"
@@ -293,14 +301,25 @@ def validate_scenario(
                 )
 
     # --- Размещение ------------------------------------------------------ #
-    if scenario.accommodation_type not in SELECTABLE_ACCOMMODATION_TYPES:
+    if scenario.accommodation_type is None:
+        if scenario.transport_type is None:
+            result.add_error(
+                "NO_OBSERVED_COMPONENT",
+                "Сценарий должен наблюдать хотя бы одну компоненту: транспорт или проживание",
+                "accommodation_type",
+            )
+    elif scenario.accommodation_type not in SELECTABLE_ACCOMMODATION_TYPES:
         result.add_error(
             "UNSUPPORTED_ACCOMMODATION_TYPE",
             f"Тип размещения {scenario.accommodation_type} недоступен в конструкторе",
             "accommodation_type",
         )
 
-    if scenario.stars.numeric is not None and scenario.accommodation_type not in STARRED_ACCOMMODATION_TYPES:
+    if (
+        scenario.accommodation_type is not None
+        and scenario.stars.numeric is not None
+        and scenario.accommodation_type not in STARRED_ACCOMMODATION_TYPES
+    ):
         result.add_error(
             "STARS_NOT_APPLICABLE",
             f"Звездность неприменима для типа размещения {scenario.accommodation_type}",

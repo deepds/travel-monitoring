@@ -60,7 +60,12 @@ CSV_COLUMNS = [
 
 @dataclass(slots=True)
 class ScenarioDraft:
-    """Проверенный набор параметров для создания сценария."""
+    """Проверенный набор параметров для создания сценария.
+
+    ``transport_type`` или ``accommodation_type`` могут быть ``None`` —
+    компонента тогда не наблюдается. Хотя бы одна должна остаться: сценарий
+    без компонент ничего не измеряет.
+    """
 
     origin_city_code: str
     destination_city_code: str
@@ -68,10 +73,10 @@ class ScenarioDraft:
     return_date: date
     adults: int = 2
     children_ages: tuple[int, ...] = ()
-    transport_type: TransportType = TransportType.AVIA
+    transport_type: TransportType | None = TransportType.AVIA
     flight_fare_type: FlightFareType | None = FlightFareType.CHEAPEST
     rail_class: RailClass | None = None
-    accommodation_type: AccommodationType = AccommodationType.HOTEL
+    accommodation_type: AccommodationType | None = AccommodationType.HOTEL
     stars: StarsFilter = StarsFilter.ANY
     meal_type: MealType = MealType.ANY
     cancellation_filter: CancellationFilter = CancellationFilter.ANY
@@ -144,30 +149,50 @@ def build_key(draft: ScenarioDraft) -> ScenarioKey:
 
 
 def default_code(draft: ScenarioDraft, fingerprint: str) -> str:
-    """Читаемый код сценария, устойчивый к повторной генерации."""
-    transport = "AV" if draft.transport_type == TransportType.AVIA else "RW"
-    variant = (
-        (draft.flight_fare_type.value[:3] if draft.flight_fare_type else "STD")
-        if draft.transport_type == TransportType.AVIA
-        else (draft.rail_class.value[:3] if draft.rail_class else "STD")
-    )
-    stars = draft.stars.value if draft.stars != StarsFilter.ANY else "X"
+    """Читаемый код сценария, устойчивый к повторной генерации.
+
+    Ненаблюдаемая компонента обозначается ``NONE``: по коду должно быть видно,
+    что сценарий следит только за одной частью поездки.
+    """
+    if draft.transport_type is None:
+        transport_part = "NONE"
+    else:
+        prefix = "AV" if draft.transport_type == TransportType.AVIA else "RW"
+        variant = (
+            (draft.flight_fare_type.value[:3] if draft.flight_fare_type else "STD")
+            if draft.transport_type == TransportType.AVIA
+            else (draft.rail_class.value[:3] if draft.rail_class else "STD")
+        )
+        transport_part = f"{prefix}{variant}"
+
+    if draft.accommodation_type is None:
+        stay_part = "NONE"
+    else:
+        stars = draft.stars.value if draft.stars != StarsFilter.ANY else "X"
+        stay_part = f"{draft.accommodation_type.value[:4]}{stars}"
+
     return (
         f"{draft.origin_city_code}-{draft.destination_city_code}-"
-        f"{draft.departure_date:%Y%m%d}-{transport}{variant}-"
-        f"{draft.accommodation_type.value[:4]}{stars}-{fingerprint[:6]}"
+        f"{draft.departure_date:%Y%m%d}-{transport_part}-{stay_part}-{fingerprint[:6]}"
     ).upper()
 
 
 def default_name(draft: ScenarioDraft, origin: City, destination: City) -> str:
     nights = (draft.return_date - draft.departure_date).days
-    transport = "авиа" if draft.transport_type == TransportType.AVIA else "ЖД"
     composition = f"{draft.adults} взр."
     if draft.children_ages:
         composition += f" + {len(draft.children_ages)} реб."
+
+    if draft.transport_type is None:
+        scope = "только проживание"
+    elif draft.accommodation_type is None:
+        scope = "только авиа" if draft.transport_type == TransportType.AVIA else "только ЖД"
+    else:
+        scope = "авиа" if draft.transport_type == TransportType.AVIA else "ЖД"
+
     return (
         f"{origin.name} → {destination.name}, {draft.departure_date:%d.%m.%Y}, "
-        f"{nights} ноч., {transport}, {composition}"
+        f"{nights} ноч., {scope}, {composition}"
     )
 
 
@@ -222,10 +247,10 @@ def create_scenario(
         nights=(draft.return_date - draft.departure_date).days,
         adults=draft.adults,
         children_ages=list(draft.children_ages),
-        transport_type=draft.transport_type.value,
+        transport_type=draft.transport_type.value if draft.transport_type else None,
         flight_fare_type=draft.flight_fare_type.value if draft.flight_fare_type else None,
         rail_class=draft.rail_class.value if draft.rail_class else None,
-        accommodation_type=draft.accommodation_type.value,
+        accommodation_type=draft.accommodation_type.value if draft.accommodation_type else None,
         stars=draft.stars.value,
         meal_type=draft.meal_type.value,
         cancellation_filter=draft.cancellation_filter.value,

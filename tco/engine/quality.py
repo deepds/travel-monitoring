@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Sequence
 
 from tco.core.enums import ComponentType
 from tco.engine.aggregation import ComponentAggregate
@@ -58,17 +59,24 @@ def calculate_quality_score(
     accommodation: ComponentAggregate,
     rules: ProfileRules,
     connector_stability: dict[str, float] | None = None,
+    observed: Sequence[ComponentType] = (ComponentType.TRANSPORT, ComponentType.ACCOMMODATION),
 ) -> QualityScore:
-    """Считает Quality Score в диапазоне 0–100."""
+    """Считает Quality Score в диапазоне 0–100.
+
+    ``observed`` — компоненты, которые сценарий обязался наблюдать. Полнота
+    меряется по ним: иначе сценарий «только транспорт» терял бы 30 % оценки за
+    отсутствие проживания, которого он и не запрашивал.
+    """
     quality = rules.quality
     weights = quality.weights.normalized()
     stability_map = connector_stability or {}
     reasons: list[str] = []
 
-    components = {
+    all_components = {
         ComponentType.TRANSPORT: transport,
         ComponentType.ACCOMMODATION: accommodation,
     }
+    components = {key: all_components[key] for key in observed} or all_components
     available = [item for item in components.values() if item.is_available]
 
     # --- Полнота компонентов -------------------------------------------- #

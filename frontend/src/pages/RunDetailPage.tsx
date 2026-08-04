@@ -6,7 +6,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '@/api/client';
 import type { SourceBreakdownRow } from '@/api/types';
 import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag, SyntheticTag,
+  AsyncBlock, ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag,
 } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
 import {
@@ -68,7 +68,6 @@ export default function RunDetailPage() {
         <Space wrap style={{ marginBottom: 16 }}>
           {data ? <RunStatusTag status={data.status} /> : null}
           <ConfidenceTag level={data?.confidence_level ?? null} reason={data?.confidence.reason} />
-          <SyntheticTag visible={Boolean(data?.contains_synthetic_data)} />
           {data?.served_from_cache ? <Tag color="blue">из кэша</Tag> : null}
           {(data?.component_statuses ?? []).map((status) => (
             <Tag key={status} color="warning">
@@ -105,8 +104,11 @@ export default function RunDetailPage() {
                     {money(data?.total_estimated_cost)}
                   </div>
                   <Text type="secondary">
-                    Диапазон {money(data?.total.p25)} — {money(data?.total.p75)} · на человека{' '}
-                    {money(data?.price_per_person)}
+                    P25–P75 {money(data?.total.p25)} — {money(data?.total.p75)}
+                    {data?.total.min != null && data?.total.max != null ? (
+                      <> · размах {money(data.total.min)} — {money(data.total.max)}</>
+                    ) : null}
+                    {' '}· на человека {money(data?.price_per_person)}
                   </Text>
                 </div>
               ) : null}
@@ -116,7 +118,13 @@ export default function RunDetailPage() {
                   <b>{money(data?.transport.median)}</b>
                   <br />
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {money(data?.transport.p25)} — {money(data?.transport.p75)}
+                    P25–P75 {money(data?.transport.p25)} — {money(data?.transport.p75)}
+                    {data?.transport.min != null && data?.transport.max != null ? (
+                      <>
+                        <br />
+                        размах {money(data.transport.min)} — {money(data.transport.max)}
+                      </>
+                    ) : null}
                     <br />
                     источников {data?.transport.source_count}, предложений{' '}
                     {data?.transport.offer_count}
@@ -129,7 +137,13 @@ export default function RunDetailPage() {
                   <b>{money(data?.accommodation.median)}</b>
                   <br />
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {money(data?.accommodation.p25)} — {money(data?.accommodation.p75)}
+                    P25–P75 {money(data?.accommodation.p25)} — {money(data?.accommodation.p75)}
+                    {data?.accommodation.min != null && data?.accommodation.max != null ? (
+                      <>
+                        <br />
+                        размах {money(data.accommodation.min)} — {money(data.accommodation.max)}
+                      </>
+                    ) : null}
                     <br />
                     источников {data?.accommodation.source_count}, предложений{' '}
                     {data?.accommodation.offer_count}

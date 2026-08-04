@@ -156,18 +156,26 @@ export default function ScenariosPage() {
               {
                 title: 'Транспорт',
                 dataIndex: 'transport_type',
-                render: (value: string) => <Tag>{TRANSPORT_LABEL[value] ?? value}</Tag>,
+                render: (value: string | null) =>
+                  value ? (
+                    <Tag>{TRANSPORT_LABEL[value] ?? value}</Tag>
+                  ) : (
+                    <Tag color="default">не наблюдается</Tag>
+                  ),
               },
               {
                 title: 'Размещение',
                 key: 'accommodation',
-                render: (_, row) => (
-                  <span>
-                    {ACCOMMODATION_LABEL[row.accommodation_type] ?? row.accommodation_type}
-                    <br />
-                    <span style={{ color: '#8c8c8c', fontSize: 12 }}>{starsLabel(row.stars)}</span>
-                  </span>
-                ),
+                render: (_, row) =>
+                  row.accommodation_type ? (
+                    <span>
+                      {ACCOMMODATION_LABEL[row.accommodation_type] ?? row.accommodation_type}
+                      <br />
+                      <span style={{ color: '#8c8c8c', fontSize: 12 }}>{starsLabel(row.stars)}</span>
+                    </span>
+                  ) : (
+                    <Tag color="default">не наблюдается</Tag>
+                  ),
               },
               {
                 title: 'Режим',

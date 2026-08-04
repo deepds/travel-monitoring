@@ -11,7 +11,7 @@ import { Link } from 'react-router-dom';
 import { ApiError, api } from '@/api/client';
 import type { Job, Run } from '@/api/types';
 import {
-  ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag, SyntheticTag,
+  ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag,
 } from '@/components/common';
 import { useAsync, usePolling } from '@/hooks/useAsync';
 import {
@@ -426,7 +426,6 @@ function RunResult({ run }: { run: Run }) {
       <Space wrap style={{ marginBottom: 12 }}>
         <RunStatusTag status={run.status} />
         <ConfidenceTag level={run.confidence_level} reason={run.confidence.reason} />
-        <SyntheticTag visible={run.contains_synthetic_data} />
         {run.served_from_cache ? <Tag color="blue">из кэша</Tag> : null}
         {run.component_statuses.map((status) => (
           <Tag key={status} color="warning">
@@ -453,8 +452,12 @@ function RunResult({ run }: { run: Run }) {
             {money(run.total_estimated_cost)}
           </div>
           <Text type="secondary">
-            Диапазон: {money(run.total.p25)} — {money(run.total.p75)} · на человека{' '}
-            {money(run.price_per_person)} · путешественников {run.traveler_count}
+            P25–P75: {money(run.total.p25)} — {money(run.total.p75)}
+            {run.total.min != null && run.total.max != null ? (
+              <> · размах {money(run.total.min)} — {money(run.total.max)}</>
+            ) : null}
+            {' '}· на человека {money(run.price_per_person)} · путешественников{' '}
+            {run.traveler_count}
           </Text>
           {run.confidence.reason ? (
             <div style={{ marginTop: 6 }}>

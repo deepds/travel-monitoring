@@ -45,12 +45,17 @@ from tco.schemas.profile import ProfileRules
 
 @dataclass(slots=True)
 class ScenarioFilterSpec:
-    """Параметры сценария, по которым фильтруются предложения."""
+    """Параметры сценария, по которым фильтруются предложения.
 
-    transport_type: TransportType
+    ``None`` в типе транспорта или размещения означает, что компонента не
+    наблюдается: предложения такого рода до фильтра доходить не должны, а если
+    дошли — отбраковываются как несопоставимые.
+    """
+
+    transport_type: TransportType | None
     flight_fare_type: str | None
     rail_class: RailClass | None
-    accommodation_type: AccommodationType
+    accommodation_type: AccommodationType | None
     stars: StarsFilter
     meal_type: MealType
     cancellation_filter: str
@@ -134,6 +139,8 @@ def profile_filter_reason(
     filters = rules.filters
 
     if offer.offer_type == OfferType.FLIGHT.value:
+        if spec.transport_type is None:
+            return "COMPONENT_NOT_OBSERVED"
         if spec.transport_type != TransportType.AVIA:
             return "TRANSPORT_TYPE_MISMATCH"
         flight = offer.flight
@@ -154,6 +161,8 @@ def profile_filter_reason(
         return None
 
     if offer.offer_type == OfferType.RAIL.value:
+        if spec.transport_type is None:
+            return "COMPONENT_NOT_OBSERVED"
         if spec.transport_type != TransportType.RAIL:
             return "TRANSPORT_TYPE_MISMATCH"
         rail = offer.rail
@@ -166,6 +175,8 @@ def profile_filter_reason(
             return "RAIL_CLASS_MISMATCH"
         return None
 
+    if spec.accommodation_type is None:
+        return "COMPONENT_NOT_OBSERVED"
     accommodation = offer.accommodation
     if accommodation is None:
         return "MISSING_ACCOMMODATION_DETAIL"

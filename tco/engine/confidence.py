@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Sequence
 from datetime import date
 
 from tco.core.enums import ComponentType, ConfidenceLevel, SourceConfidenceLevel
@@ -58,17 +59,23 @@ def calculate_scenario_confidence(
     rules: ProfileRules,
     source_confidence: dict[str, float] | None = None,
     challenge_verified: bool | None = None,
+    observed: Sequence[ComponentType] = (ComponentType.TRANSPORT, ComponentType.ACCOMMODATION),
 ) -> ScenarioConfidence:
-    """Определяет уровень уверенности в результате расчета."""
+    """Определяет уровень уверенности в результате расчета.
+
+    ``observed`` ограничивает разбор компонентами, которые сценарий наблюдает:
+    ненаблюдаемая компонента не считается недостающей и не понижает уровень.
+    """
     thresholds = rules.confidence
     confidence_map = source_confidence or {}
     positive: list[str] = []
     negative: list[str] = []
 
-    components = {
+    all_components = {
         ComponentType.TRANSPORT: transport,
         ComponentType.ACCOMMODATION: accommodation,
     }
+    components = {key: all_components[key] for key in observed} or all_components
     available = [item for item in components.values() if item.is_available]
     missing = [name for name, item in components.items() if not item.is_available]
 

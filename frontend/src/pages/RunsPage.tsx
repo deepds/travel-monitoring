@@ -1,15 +1,15 @@
-import { Card, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Card, Select, Space, Table, Tag, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import type { RunBrief } from '@/api/types';
 import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
+  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, PriceRange, RunStatusTag,
 } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
 import { RUN_TYPE_LABEL, dateOnly, dateTime, labelOf, money, score } from '@/utils/format';
-import { QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
+import { MIN_MAX_HINT, P25_P75_HINT, QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
 
 const { Text } = Typography;
 
@@ -21,10 +21,9 @@ export default function RunsPage() {
   const [confidence, setConfidence] = useState<string>();
   const [origin, setOrigin] = useState<string>();
   const [destination, setDestination] = useState<string>();
-  const [completeOnly, setCompleteOnly] = useState(false);
-  const [includeSynthetic, setIncludeSynthetic] = useState(true);
-
   const cities = useAsync(() => api.cities(), []);
+  // Список показывает все расчеты: отбор по полноте и по синтетике убран,
+  // на текущем объеме данных он только сужал и без того небольшую выдачу.
   const query = useMemo(
     () => ({
       page,
@@ -34,10 +33,9 @@ export default function RunsPage() {
       confidence_level: confidence,
       origin,
       destination,
-      complete_only: completeOnly,
-      include_synthetic: includeSynthetic,
+      include_synthetic: true,
     }),
-    [page, pageSize, status, runType, confidence, origin, destination, completeOnly, includeSynthetic],
+    [page, pageSize, status, runType, confidence, origin, destination],
   );
 
   const runs = useAsync(() => api.runs(query), [JSON.stringify(query)]);
@@ -81,14 +79,6 @@ export default function RunsPage() {
             value={origin} onChange={(v) => { setOrigin(v); setPage(1); }} />
           <Select allowClear placeholder="Куда" style={{ width: 150 }} options={cityOptions}
             value={destination} onChange={(v) => { setDestination(v); setPage(1); }} />
-          <Space size={4}>
-            <Switch size="small" checked={completeOnly} onChange={setCompleteOnly} />
-            <Text type="secondary">только полные</Text>
-          </Space>
-          <Space size={4}>
-            <Switch size="small" checked={includeSynthetic} onChange={setIncludeSynthetic} />
-            <Text type="secondary">с синтетическими</Text>
-          </Space>
         </Space>
       </Card>
 
@@ -154,6 +144,20 @@ export default function RunsPage() {
                 render: (value: number | null) => <b>{money(value)}</b>,
               },
               {
+                title: <LabelWithHint text="P25 – P75" hint={P25_P75_HINT} />,
+                key: 'iqr',
+                align: 'right',
+                width: 190,
+                render: (_, row) => <PriceRange low={row.total_p25} high={row.total_p75} />,
+              },
+              {
+                title: <LabelWithHint text="min – max" hint={MIN_MAX_HINT} />,
+                key: 'range',
+                align: 'right',
+                width: 190,
+                render: (_, row) => <PriceRange low={row.total_min} high={row.total_max} />,
+              },
+              {
                 title: 'На человека',
                 dataIndex: 'price_per_person',
                 align: 'right',
@@ -175,11 +179,6 @@ export default function RunsPage() {
                 dataIndex: 'lead_time_days',
                 align: 'right',
                 render: (value: number) => `${value} дн.`,
-              },
-              {
-                title: '',
-                dataIndex: 'contains_synthetic_data',
-                render: (value: boolean) => <SyntheticTag visible={value} />,
               },
             ]}
           />

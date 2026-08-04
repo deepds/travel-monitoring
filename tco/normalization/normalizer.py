@@ -58,8 +58,10 @@ class NormalizationContext:
     source_id: Any
     source_code: str
     connector_version: str
-    transport_type: TransportType
-    accommodation_type: AccommodationType
+    #: ``None`` — компонента сценарием не наблюдается, предложений такого
+    #: рода в снимке быть не должно.
+    transport_type: TransportType | None
+    accommodation_type: AccommodationType | None
     departure_date: date
     return_date: date
     adults: int

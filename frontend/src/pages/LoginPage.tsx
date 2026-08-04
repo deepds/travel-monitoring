@@ -71,15 +71,6 @@ export default function LoginPage() {
               {labelOf(ENVIRONMENT_LABEL, version.environment).toLowerCase()} · вход:{' '}
               {labelOf(DEPLOYMENT_MODE_LABEL, version.deployment_mode)}
             </Text>
-            {version.sandbox_sources_enabled ? (
-              <Alert
-                type="warning"
-                showIcon
-                style={{ marginTop: 12, textAlign: 'left' }}
-                message="Включен синтетический источник"
-                description="Часть данных стенда не является рыночной и помечается отдельно."
-              />
-            ) : null}
           </div>
         ) : null}
       </Card>

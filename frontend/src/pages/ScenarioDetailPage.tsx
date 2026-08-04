@@ -6,9 +6,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
 import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag, SyntheticTag,
+  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag,
 } from '@/components/common';
 import { ScenarioDeleteModal } from '@/components/ScenarioDialogs';
+import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
 import {
@@ -47,8 +48,13 @@ export default function ScenarioDetailPage() {
           type: 'line',
           smooth: true,
           lineStyle: { width: 3 },
+          color: TOTAL_COLOR,
           data: [...points].reverse().map((p) => p.total_estimated_cost),
         },
+        ...rangeSeries(
+          [...points].reverse().map((p) => p.total_min),
+          [...points].reverse().map((p) => p.total_max),
+        ),
         {
           name: 'Транспорт',
           type: 'line',
@@ -153,22 +159,36 @@ export default function ScenarioDetailPage() {
                   (всего {data?.traveler_count})
                 </Descriptions.Item>
                 <Descriptions.Item label="Транспорт">
-                  <Tag>{TRANSPORT_LABEL[data?.transport_type ?? ''] ?? data?.transport_type}</Tag>
-                  {data?.flight_fare_type ? (
-                    <Tag>{labelOf(FARE_TYPE_LABEL, data.flight_fare_type)}</Tag>
-                  ) : null}
-                  {data?.rail_class ? (
-                    <Tag>{labelOf(RAIL_CLASS_LABEL, data.rail_class)}</Tag>
-                  ) : null}
+                  {data?.transport_type ? (
+                    <>
+                      <Tag>{TRANSPORT_LABEL[data.transport_type] ?? data.transport_type}</Tag>
+                      {data.flight_fare_type ? (
+                        <Tag>{labelOf(FARE_TYPE_LABEL, data.flight_fare_type)}</Tag>
+                      ) : null}
+                      {data.rail_class ? (
+                        <Tag>{labelOf(RAIL_CLASS_LABEL, data.rail_class)}</Tag>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Tag color="default">не наблюдается</Tag>
+                  )}
                 </Descriptions.Item>
                 <Descriptions.Item label="Размещение">
-                  {ACCOMMODATION_LABEL[data?.accommodation_type ?? ''] ?? data?.accommodation_type} ·{' '}
-                  {starsLabel(data?.stars)}
+                  {data?.accommodation_type ? (
+                    <>
+                      {ACCOMMODATION_LABEL[data.accommodation_type] ?? data.accommodation_type} ·{' '}
+                      {starsLabel(data.stars)}
+                    </>
+                  ) : (
+                    <Tag color="default">не наблюдается</Tag>
+                  )}
                 </Descriptions.Item>
-                <Descriptions.Item label="Питание / отмена">
-                  {labelOf(MEAL_LABEL, data?.meal_type)} ·{' '}
-                  {labelOf(CANCELLATION_LABEL, data?.cancellation_filter)}
-                </Descriptions.Item>
+                {data?.accommodation_type ? (
+                  <Descriptions.Item label="Питание / отмена">
+                    {labelOf(MEAL_LABEL, data.meal_type)} ·{' '}
+                    {labelOf(CANCELLATION_LABEL, data.cancellation_filter)}
+                  </Descriptions.Item>
+                ) : null}
                 <Descriptions.Item label="Режим">
                   <Tag>{labelOf(SCENARIO_TYPE_LABEL, data?.scenario_type)}</Tag>
                   {data?.is_active ? <Tag color="success">активен</Tag> : <Tag>выключен</Tag>}
@@ -258,11 +278,6 @@ export default function ScenarioDetailPage() {
                   title: 'Уверенность',
                   dataIndex: 'confidence_level',
                   render: (value: any) => <ConfidenceTag level={value} />,
-                },
-                {
-                  title: '',
-                  dataIndex: 'contains_synthetic_data',
-                  render: (value: boolean) => <SyntheticTag visible={value} />,
                 },
               ]}
             />

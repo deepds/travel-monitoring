@@ -64,8 +64,9 @@ class EngineScenario:
     return_date: date
     adults: int
     children_ages: tuple[int, ...]
-    transport_type: TransportType
-    accommodation_type: AccommodationType
+    #: ``None`` — компонента сценарием не наблюдается.
+    transport_type: TransportType | None
+    accommodation_type: AccommodationType | None
     stars: StarsFilter
     meal_type: MealType
     cancellation_filter: str
@@ -79,6 +80,28 @@ class EngineScenario:
     @property
     def nights(self) -> int:
         return (self.return_date - self.departure_date).days
+
+    @property
+    def observes_transport(self) -> bool:
+        return self.transport_type is not None
+
+    @property
+    def observes_accommodation(self) -> bool:
+        return self.accommodation_type is not None
+
+    @property
+    def observed_components(self) -> tuple[ComponentType, ...]:
+        """Компоненты, которые сценарий обязался наблюдать.
+
+        Именно по ним определяется полнота результата: компонента, которую
+        сценарий не наблюдает, не является недостающей.
+        """
+        observed: list[ComponentType] = []
+        if self.observes_transport:
+            observed.append(ComponentType.TRANSPORT)
+        if self.observes_accommodation:
+            observed.append(ComponentType.ACCOMMODATION)
+        return tuple(observed)
 
     def filter_spec(self) -> ScenarioFilterSpec:
         return ScenarioFilterSpec(
@@ -106,10 +129,12 @@ class EngineScenario:
             "adults": self.adults,
             "children_ages": list(self.children_ages),
             "traveler_count": self.traveler_count,
-            "transport_type": self.transport_type.value,
+            "transport_type": self.transport_type.value if self.transport_type else None,
             "flight_fare_type": self.flight_fare_type,
             "rail_class": self.rail_class.value if self.rail_class else None,
-            "accommodation_type": self.accommodation_type.value,
+            "accommodation_type": (
+                self.accommodation_type.value if self.accommodation_type else None
+            ),
             "stars": self.stars.value,
             "meal_type": self.meal_type.value,
             "cancellation_filter": self.cancellation_filter,
@@ -206,7 +231,10 @@ def calculate_run(payload: EngineInput) -> EngineResult:
     _mark_ineligible_sources(accommodation_offers, accommodation)
 
     # --- Итоговая стоимость ------------------------------------------------ #
-    totals = _combine_components(transport, accommodation, scenario.traveler_count, rules)
+    observed = scenario.observed_components
+    totals = _combine_components(
+        transport, accommodation, scenario.traveler_count, rules, observed=observed
+    )
 
     # --- Качество и уверенность -------------------------------------------- #
     quality = calculate_quality_score(
@@ -214,6 +242,7 @@ def calculate_run(payload: EngineInput) -> EngineResult:
         accommodation=accommodation,
         rules=rules,
         connector_stability=payload.connector_stability,
+        observed=observed,
     )
     confidence = calculate_scenario_confidence(
         quality=quality,
@@ -222,11 +251,12 @@ def calculate_run(payload: EngineInput) -> EngineResult:
         rules=rules,
         source_confidence=payload.source_confidence,
         challenge_verified=payload.challenge_verified,
+        observed=observed,
     )
 
     # --- Статусы ------------------------------------------------------------ #
     status, component_statuses = _determine_status(
-        transport, accommodation, payload.source_infos, payload.offers
+        transport, accommodation, payload.source_infos, payload.offers, observed=observed
     )
 
     # --- Сборка ScenarioRun -------------------------------------------------- #
@@ -296,18 +326,24 @@ def calculate_run(payload: EngineInput) -> EngineResult:
         transport_p25=transport.p25,
         transport_median=transport.median,
         transport_p75=transport.p75,
+        transport_min=transport.minimum,
+        transport_max=transport.maximum,
         transport_source_count=transport.source_count,
         transport_offer_count=transport.offer_count,
         transport_disagreement=transport.disagreement,
         hotel_p25=accommodation.p25,
         hotel_median=accommodation.median,
         hotel_p75=accommodation.p75,
+        hotel_min=accommodation.minimum,
+        hotel_max=accommodation.maximum,
         hotel_source_count=accommodation.source_count,
         hotel_offer_count=accommodation.offer_count,
         hotel_disagreement=accommodation.disagreement,
         total_estimated_cost=totals["total_estimated_cost_decimal"],
         total_p25=totals["total_p25_decimal"],
         total_p75=totals["total_p75_decimal"],
+        total_min=totals["total_min_decimal"],
+        total_max=totals["total_max_decimal"],
         price_per_person=totals["price_per_person_decimal"],
         transport_share=totals["transport_share"],
         currency=totals["currency"],
@@ -406,28 +442,48 @@ def _combine_components(
     accommodation: ComponentAggregate,
     traveler_count: int,
     rules: ProfileRules,
+    *,
+    observed: Sequence[ComponentType] = (ComponentType.TRANSPORT, ComponentType.ACCOMMODATION),
 ) -> dict[str, Any]:
     """Складывает компоненты в итоговую расчетную типовую стоимость.
 
-    Итог определяется только при наличии обоих компонентов. Отсутствующий
-    компонент никогда не подменяется старым значением (SCOPE-R P §11).
+    Итог определяется, когда рассчитаны **все наблюдаемые** компоненты.
+    Компонента, которую сценарий не наблюдает, в сумму не входит и не мешает
+    итогу: сценарий «только транспорт» дает полноценную стоимость перелета.
+    Недостающая наблюдаемая компонента, наоборот, отменяет итог целиком и
+    никогда не подменяется старым значением (SCOPE-R P §11).
     """
     digits = rules.rounding_digits
     total: Decimal | None = None
     total_p25: Decimal | None = None
     total_p75: Decimal | None = None
+    total_min: Decimal | None = None
+    total_max: Decimal | None = None
     per_person: Decimal | None = None
     transport_share: float | None = None
 
-    if transport.is_available and accommodation.is_available:
-        total = money(transport.median + accommodation.median)
-        if transport.p25 is not None and accommodation.p25 is not None:
-            total_p25 = money(transport.p25 + accommodation.p25)
-        if transport.p75 is not None and accommodation.p75 is not None:
-            total_p75 = money(transport.p75 + accommodation.p75)
+    parts = {
+        ComponentType.TRANSPORT: transport,
+        ComponentType.ACCOMMODATION: accommodation,
+    }
+    required = [parts[item] for item in observed]
+
+    if required and all(item.is_available for item in required):
+        total = money(sum((item.median for item in required), Decimal(0)))
+        if all(item.p25 is not None for item in required):
+            total_p25 = money(sum((item.p25 for item in required), Decimal(0)))
+        if all(item.p75 is not None for item in required):
+            total_p75 = money(sum((item.p75 for item in required), Decimal(0)))
+        # В отличие от медианы сумма границ точна: самая дешевая комбинация и
+        # есть сумма самых дешевых компонент, поскольку компоненты выбираются
+        # независимо друг от друга.
+        if all(item.minimum is not None for item in required):
+            total_min = money(sum((item.minimum for item in required), Decimal(0)))
+        if all(item.maximum is not None for item in required):
+            total_max = money(sum((item.maximum for item in required), Decimal(0)))
         if traveler_count > 0 and total is not None:
             per_person = money(total / traveler_count)
-        if total and total > 0:
+        if total and total > 0 and transport.is_available:
             transport_share = float(transport.median / total)
 
     return {
@@ -435,17 +491,25 @@ def _combine_components(
         "transport_median": round_display(transport.median, digits),
         "transport_p25": round_display(transport.p25, digits),
         "transport_p75": round_display(transport.p75, digits),
+        "transport_min": round_display(transport.minimum, digits),
+        "transport_max": round_display(transport.maximum, digits),
         "accommodation_median": round_display(accommodation.median, digits),
         "accommodation_p25": round_display(accommodation.p25, digits),
         "accommodation_p75": round_display(accommodation.p75, digits),
+        "accommodation_min": round_display(accommodation.minimum, digits),
+        "accommodation_max": round_display(accommodation.maximum, digits),
         "total_estimated_cost": round_display(total, digits),
         "total_p25": round_display(total_p25, digits),
         "total_p75": round_display(total_p75, digits),
+        "total_min": round_display(total_min, digits),
+        "total_max": round_display(total_max, digits),
         "price_per_person": round_display(per_person, digits),
         "transport_share": round(transport_share, 4) if transport_share is not None else None,
         "traveler_count": traveler_count,
         "total_estimated_cost_decimal": total,
         "total_p25_decimal": total_p25,
+        "total_min_decimal": total_min,
+        "total_max_decimal": total_max,
         "total_p75_decimal": total_p75,
         "price_per_person_decimal": per_person,
         "note": (
@@ -465,20 +529,37 @@ def _determine_status(
     accommodation: ComponentAggregate,
     source_infos: dict[str, SourceCollectionInfo],
     offers: Sequence[Offer],
+    *,
+    observed: Sequence[ComponentType] = (ComponentType.TRANSPORT, ComponentType.ACCOMMODATION),
 ) -> tuple[RunStatus, list[ComponentStatus]]:
-    """Определяет основной и компонентные статусы расчета."""
-    component_statuses: list[ComponentStatus] = []
+    """Определяет основной и компонентные статусы расчета.
 
-    if not transport.is_available:
+    Полнота меряется только по наблюдаемым компонентам: сценарий, который
+    следит за одним перелетом, не является частично успешным из-за отсутствия
+    проживания — он его и не запрашивал.
+    """
+    component_statuses: list[ComponentStatus] = []
+    watches_transport = ComponentType.TRANSPORT in observed
+    watches_accommodation = ComponentType.ACCOMMODATION in observed
+
+    if watches_transport and not transport.is_available:
         component_statuses.append(ComponentStatus.PARTIAL_TRANSPORT_MISSING)
-    if not accommodation.is_available:
+    if watches_accommodation and not accommodation.is_available:
         component_statuses.append(ComponentStatus.PARTIAL_HOTEL_MISSING)
     if transport.is_single_source or accommodation.is_single_source:
         component_statuses.append(ComponentStatus.COMPLETE_SINGLE_SOURCE)
 
-    if transport.is_available and accommodation.is_available:
+    ready = [
+        item.is_available
+        for item, watched in (
+            (transport, watches_transport),
+            (accommodation, watches_accommodation),
+        )
+        if watched
+    ]
+    if ready and all(ready):
         return RunStatus.SUCCESS, component_statuses
-    if transport.is_available or accommodation.is_available:
+    if any(ready):
         return RunStatus.PARTIAL_SUCCESS, component_statuses
 
     # Ни одного компонента: различаем технический сбой и отсутствие данных.

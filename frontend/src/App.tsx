@@ -102,11 +102,6 @@ export default function App() {
             {version?.deployment_mode === 'OPEN' ? (
               <Tag color="red">Открытый режим — авторизация отключена</Tag>
             ) : null}
-            {version?.sandbox_sources_enabled ? (
-              <Tag color="purple" icon={<ExperimentOutlined />}>
-                Песочница включена
-              </Tag>
-            ) : null}
             {version?.environment && version.environment !== 'prod' ? (
               <Tag>{labelOf(ENVIRONMENT_LABEL, version.environment)}</Tag>
             ) : null}

@@ -164,11 +164,6 @@ export default function SourcesPage() {
                 render: (value: string, row) => (
                   <span>
                     <b>{value}</b>
-                    {row.is_synthetic ? (
-                      <Tag color="purple" style={{ marginLeft: 6 }}>
-                        синтетический
-                      </Tag>
-                    ) : null}
                     <br />
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {row.name}

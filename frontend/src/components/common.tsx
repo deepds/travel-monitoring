@@ -3,7 +3,6 @@
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
-  ExperimentOutlined,
   InfoCircleOutlined,
   MinusOutlined,
 } from '@ant-design/icons';
@@ -13,7 +12,7 @@ import type { ReactNode } from 'react';
 import type { ConfidenceLevel, RunStatus } from '@/api/types';
 import {
   CONFIDENCE_COLOR, CONFIDENCE_LABEL, RUN_STATUS_COLOR, RUN_STATUS_LABEL,
-  changeTone, signedPercent,
+  changeTone, money, signedPercent,
 } from '@/utils/format';
 
 const { Text } = Typography;
@@ -75,15 +74,26 @@ export function RunStatusTag({ status }: { status: RunStatus }) {
   return <Tag color={RUN_STATUS_COLOR[status]}>{RUN_STATUS_LABEL[status] ?? status}</Tag>;
 }
 
-/** Признак синтетических данных обязан быть виден везде, где показан результат. */
-export function SyntheticTag({ visible }: { visible: boolean }) {
-  if (!visible) return null;
+/**
+ * Ценовой диапазон одной строкой.
+ *
+ * Границы показываются только парой: одна половина диапазона без второй
+ * читается как самостоятельная оценка, чем не является.
+ */
+export function PriceRange({
+  low,
+  high,
+}: {
+  low: number | null | undefined;
+  high: number | null | undefined;
+}) {
+  if (low === null || low === undefined || high === null || high === undefined) {
+    return <Text type="secondary">—</Text>;
+  }
   return (
-    <Tooltip title="В расчете участвовали предложения синтетического источника-песочницы. Это не рыночные данные.">
-      <Tag color="purple" icon={<ExperimentOutlined />}>
-        Синтетические данные
-      </Tag>
-    </Tooltip>
+    <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+      {money(low)} — {money(high)}
+    </Text>
   );
 }
 

@@ -127,6 +127,19 @@ def latest_runs(
     return result
 
 
+def _extremum(values: Iterable[Any], *, smallest: bool) -> float | None:
+    """Крайнее значение размаха по группе расчетов.
+
+    Медиана минимумов ничего не означала бы: границей выборки является самое
+    дешевое и самое дорогое предложение, а не типичное среди крайних.
+    """
+    numbers = [to_decimal(value) for value in values]
+    numbers = [value for value in numbers if value is not None]
+    if not numbers:
+        return None
+    return float(min(numbers) if smallest else max(numbers))
+
+
 def _median_total(runs: Iterable[ScenarioRun]) -> float | None:
     values = [to_decimal(run.total_estimated_cost) for run in runs]
     return median([value for value in values if value is not None])
@@ -281,6 +294,8 @@ def directions(
                 "p75": round_display(
                     median([to_decimal(r.total_p75) for r in complete if r.total_p75]), 0
                 ),
+                "min": round_display(_extremum([r.total_min for r in complete], smallest=True), 0),
+                "max": round_display(_extremum([r.total_max for r in complete], smallest=False), 0),
                 "change_1d": pct_change(current_median, day_median),
                 "change_7d": pct_change(current_median, week_median),
                 "change_30d": pct_change(current_median, month_median),
@@ -345,6 +360,14 @@ def trends(
                 ),
                 "p75": round_display(
                     median([to_decimal(r.total_p75) for r in complete if r.total_p75]), 0
+                ),
+                # Размах — это границы наблюдавшихся цен, поэтому по группе
+                # берутся крайние значения, а не медиана крайних.
+                "min": round_display(
+                    _extremum([r.total_min for r in complete], smallest=True), 0
+                ),
+                "max": round_display(
+                    _extremum([r.total_max for r in complete], smallest=False), 0
                 ),
                 "avg_quality_score": _avg(
                     [run.quality_score for run in bucket if run.quality_score is not None]
@@ -530,6 +553,8 @@ def scenario_history(
             "total_estimated_cost": round_display(run.total_estimated_cost, 0),
             "total_p25": round_display(run.total_p25, 0),
             "total_p75": round_display(run.total_p75, 0),
+            "total_min": round_display(run.total_min, 0),
+            "total_max": round_display(run.total_max, 0),
             "price_per_person": round_display(run.price_per_person, 0),
             "quality_score": run.quality_score,
             "confidence_level": run.confidence_level,

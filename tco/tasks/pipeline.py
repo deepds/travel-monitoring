@@ -104,11 +104,23 @@ def _collect_component(snapshot_id: str, profile_id: str | None, component: str)
         profile = _profile(session, profile_id, scenario)
         rules = ProfileRules.parse(profile.rules)
 
-        offer_types = (
-            (transport_offer_type_for(scenario),)
-            if component == "TRANSPORT"
-            else (OfferType.ACCOMMODATION,)
-        )
+        if component == "TRANSPORT":
+            transport_type = transport_offer_type_for(scenario)
+            offer_types = (transport_type,) if transport_type else ()
+        else:
+            offer_types = (OfferType.ACCOMMODATION,) if scenario.observes_accommodation else ()
+
+        # Сценарий может наблюдать только одну компоненту: к источникам за
+        # второй обращаться незачем, ветвь chord завершается сразу.
+        if not offer_types:
+            return {
+                "snapshot_id": str(snapshot.id),
+                "component": component,
+                "offers": 0,
+                "errors": 0,
+                "skipped": "компонента не наблюдается сценарием",
+            }
+
         result = collect_into_snapshot(
             session, snapshot, scenario, rules=rules, offer_types=offer_types
         )
