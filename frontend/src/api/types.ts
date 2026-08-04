@@ -592,6 +592,84 @@ export interface DirectionRow {
   observation_date?: string;
 }
 
+export interface DeparturePoint {
+  departure_date: string;
+  lead_time_days: number;
+  /** Отношение к типичной стоимости своего направления. */
+  price_index: number;
+  median_total_cost: number | null;
+  scenario_count: number;
+  routes: number;
+}
+
+export interface DepartureDates {
+  points: DeparturePoint[];
+  comparable_routes: number;
+  cheapest: DeparturePoint | null;
+  dearest: DeparturePoint | null;
+  note: string;
+}
+
+export interface SourceGapRow {
+  origin_city_code: string;
+  origin_city_name: string;
+  destination_city_code: string;
+  destination_city_name: string;
+  transport_type: string;
+  matched_trains: number;
+  median_gap: number;
+  max_gap: number;
+}
+
+export interface SourceGap {
+  items: SourceGapRow[];
+  summary: { matched_trains: number; median_gap: number | null; max_gap: number | null };
+  note?: string;
+}
+
+export interface Premium {
+  from: string;
+  to: string;
+  premium: number | null;
+  base: number | null;
+  upgraded: number | null;
+  snapshots: number;
+}
+
+export interface PriceComposition {
+  stars: Premium;
+  baggage: Premium;
+  direct: Premium;
+  note?: string;
+}
+
+export interface SpreadRow {
+  origin_city_code: string;
+  origin_city_name: string;
+  destination_city_code: string;
+  destination_city_name: string;
+  transport_type: string;
+  median_total_cost: number | null;
+  min: number | null;
+  max: number | null;
+  p25: number | null;
+  p75: number | null;
+  spread_ratio: number | null;
+  iqr_ratio: number | null;
+  review_score: number | null;
+  review_sample: number;
+}
+
+export interface Spread {
+  items: SpreadRow[];
+  summary: {
+    median_spread_ratio: number | null;
+    median_iqr_ratio: number | null;
+    widest: SpreadRow | null;
+  };
+  note?: string;
+}
+
 export interface Template {
   id: string;
   code: string;

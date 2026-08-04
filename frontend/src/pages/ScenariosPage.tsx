@@ -10,9 +10,7 @@ import { ExportButton } from '@/components/ExportButton';
 import { ScenarioCreateModal, ScenarioDeleteModal } from '@/components/ScenarioDialogs';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
-import {
-  ACCOMMODATION_LABEL, SCENARIO_TYPE_LABEL, TRANSPORT_LABEL, dateOnly, labelOf, starsLabel,
-} from '@/utils/format';
+import { ACCOMMODATION_LABEL, TRANSPORT_LABEL, dateOnly, starsLabel } from '@/utils/format';
 
 export default function ScenariosPage() {
   const { message } = App.useApp();
@@ -23,8 +21,7 @@ export default function ScenariosPage() {
   const [origin, setOrigin] = useState<string>();
   const [destination, setDestination] = useState<string>();
   const [transport, setTransport] = useState<string>();
-  const [scenarioType, setScenarioType] = useState<string>();
-  const [activeOnly, setActiveOnly] = useState<boolean | undefined>();
+  const [accommodation, setAccommodation] = useState<string>();
   const [createOpen, setCreateOpen] = useState(false);
   const [toDelete, setToDelete] = useState<ScenarioBrief | null>(null);
 
@@ -37,10 +34,9 @@ export default function ScenariosPage() {
       origin,
       destination,
       transport_type: transport,
-      scenario_type: scenarioType,
-      is_active: activeOnly,
+      accommodation_type: accommodation,
     }),
-    [page, pageSize, search, origin, destination, transport, scenarioType, activeOnly],
+    [page, pageSize, search, origin, destination, transport, accommodation],
   );
 
   const scenarios = useAsync(() => api.scenarios(query), [JSON.stringify(query)]);
@@ -102,17 +98,9 @@ export default function ScenariosPage() {
           <Select allowClear placeholder="Транспорт" style={{ width: 130 }}
             options={[{ value: 'AVIA', label: 'Авиа' }, { value: 'RAIL', label: 'ЖД' }]}
             value={transport} onChange={(v) => { setTransport(v); setPage(1); }} />
-          <Select allowClear placeholder="Режим" style={{ width: 150 }}
-            options={[
-              { value: 'MONITORING', label: 'Мониторинг' },
-              { value: 'ON_DEMAND', label: 'По запросу' },
-              { value: 'TEMPLATE', label: 'Шаблон' },
-            ]}
-            value={scenarioType} onChange={(v) => { setScenarioType(v); setPage(1); }} />
-          <Select allowClear placeholder="Активность" style={{ width: 140 }}
-            options={[{ value: 'true', label: 'Активные' }, { value: 'false', label: 'Неактивные' }]}
-            value={activeOnly === undefined ? undefined : String(activeOnly)}
-            onChange={(v) => { setActiveOnly(v === undefined ? undefined : v === 'true'); setPage(1); }} />
+          <Select allowClear placeholder="Размещение" style={{ width: 160 }}
+            options={Object.entries(ACCOMMODATION_LABEL).map(([value, label]) => ({ value, label }))}
+            value={accommodation} onChange={(v) => { setAccommodation(v); setPage(1); }} />
         </Space>
       </Card>
 
@@ -189,15 +177,6 @@ export default function ScenariosPage() {
                   ) : (
                     <Tag color="default">не наблюдается</Tag>
                   ),
-              },
-              {
-                title: 'Режим',
-                dataIndex: 'scenario_type',
-                render: (value: string) => (
-                  <Tag color={value === 'MONITORING' ? 'blue' : 'default'}>
-                    {labelOf(SCENARIO_TYPE_LABEL, value)}
-                  </Tag>
-                ),
               },
               {
                 title: 'Статус',

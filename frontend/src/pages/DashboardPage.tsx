@@ -1,7 +1,6 @@
 import { Card, Col, Row, Segmented, Table, Tag, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import type { DirectionRow } from '@/api/types';
@@ -11,6 +10,9 @@ import {
 import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
+import {
+  DepartureDatesCard, PriceCompositionCard, SourceGapCard, SpreadCard,
+} from '@/components/InsightCards';
 import { TransportModeCard } from '@/components/TransportModeCard';
 import { useAsync } from '@/hooks/useAsync';
 import { dateOnly, dateTime, money, num, percent, TRANSPORT_LABEL } from '@/utils/format';
@@ -46,7 +48,6 @@ export default function DashboardPage() {
   const overview = useAsync(() => api.overview(query), deps);
   const directions = useAsync(() => api.directions(query), deps);
   const structure = useAsync(() => api.costStructure(query), deps);
-  const changes = useAsync(() => api.changes({ ...query, window_days: 7 }), deps);
   const trends = useAsync(
     () => api.trends({ ...query, days: trendDays, granularity }),
     [...deps, trendDays, granularity],
@@ -232,25 +233,6 @@ export default function DashboardPage() {
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
-              title="Изменение за 1 день"
-              value={<ChangeIndicator value={data?.change_1d as number} />}
-              hint="Сравнение с последним расчетом предыдущих суток по одному и тому же множеству сценариев: иначе изменение отражало бы смену состава, а не динамику рынка."
-              extra={
-                <Text type="secondary">
-                  сопоставимых сценариев: {num(data?.comparable_scenarios_1d as number)}
-                </Text>
-              }
-            />
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <MetricCard
-              title="Доля транспорта"
-              value={percent(data?.median_transport_share as number)}
-              hint="Сколько в типовой стоимости приходится на проезд, а не на проживание."
-            />
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <MetricCard
               title="Направлений под наблюдением"
               value={num(data?.scenario_count as number)}
               extra={
@@ -345,65 +327,11 @@ export default function DashboardPage() {
         </AsyncBlock>
       </Card>
 
-      <Card title="Существенные изменения за 7 дней" size="small" style={{ marginTop: 16 }}>
-        <AsyncBlock
-          loading={changes.loading}
-          error={changes.error}
-          empty={(changes.data?.items ?? []).length === 0}
-          emptyText="Существенных изменений не выявлено"
-        >
-          <Table
-            size="small"
-            rowKey={(row: DirectionRow, index) => (row.scenario_code as string) ?? String(index)}
-            dataSource={changes.data?.items ?? []}
-            pagination={false}
-            columns={[
-              {
-                title: 'Сценарий',
-                dataIndex: 'scenario_code',
-                render: (value: string, row: any) =>
-                  row.scenario_id ? (
-                    <Link to={`/scenarios/${row.scenario_id}`}>{value}</Link>
-                  ) : (
-                    value
-                  ),
-              },
-              {
-                // Эндпоинт /dashboard/changes отдает направление как
-                // origin/destination — названия городов, а не коды.
-                title: 'Направление',
-                key: 'route',
-                render: (_: unknown, row: DirectionRow) => (
-                  <span>
-                    {row.origin ?? '—'} → {row.destination ?? '—'}{' '}
-                    {row.transport_type ? (
-                      <Tag>{TRANSPORT_LABEL[row.transport_type] ?? row.transport_type}</Tag>
-                    ) : null}
-                  </span>
-                ),
-              },
-              {
-                title: 'Было',
-                dataIndex: 'previous_total',
-                align: 'right' as const,
-                render: (value: number) => money(value),
-              },
-              {
-                title: 'Стало',
-                dataIndex: 'current_total',
-                align: 'right' as const,
-                render: (value: number) => money(value),
-              },
-              {
-                title: 'Изменение',
-                dataIndex: 'change',
-                align: 'right' as const,
-                render: (value: number) => <ChangeIndicator value={value} />,
-              },
-            ]}
-          />
-        </AsyncBlock>
-      </Card>
+      <SectionTitle hint="Когда ехать: индекс к типичной стоимости своего направления">
+        Цена по датам вылета
+      </SectionTitle>
+
+      <DepartureDatesCard query={query} />
 
       <SectionTitle hint="Только те направления, где наблюдаются оба способа проезда">
         Авиа против ЖД
@@ -411,6 +339,26 @@ export default function DashboardPage() {
 
       {/* Фильтр по транспорту сюда не передается: он спрятал бы половину сравнения. */}
       <TransportModeCard query={{ ...query, transport_type: undefined }} />
+
+      <SectionTitle hint="Что дает наблюдение двух источников и разброс предложений">
+        На чем можно сэкономить
+      </SectionTitle>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}>
+          {/* Разрыв источников есть только по ЖД: авиа и отели дает один Туту. */}
+          <SourceGapCard query={{ ...query, transport_type: undefined }} />
+        </Col>
+        <Col xs={24} lg={12}>
+          <PriceCompositionCard query={query} />
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24}>
+          <SpreadCard query={query} />
+        </Col>
+      </Row>
 
       <SectionTitle hint="Насколько данные под наблюдением актуальны">
         Полнота наблюдений

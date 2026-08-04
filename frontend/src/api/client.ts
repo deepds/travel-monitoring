@@ -6,7 +6,8 @@
  */
 
 import type {
-  ApiErrorBody, AuditEvent, City, DashboardOverview, DirectionRow, HealthResponse,
+  ApiErrorBody, AuditEvent, City, DashboardOverview, DepartureDates, DirectionRow,
+  HealthResponse, PriceComposition, SourceGap, Spread,
   Job, JobEvent, Offer, Paged, Principal, Profile, RailComparison, RefOption, Run,
   RunBrief, RunOffersResponse, Scenario, ScenarioBrief, ScenarioFootprint, Snapshot,
   SnapshotBrief, SnapshotSourceRow, Source, SourceBreakdownRow, SourceConfidence,
@@ -176,6 +177,11 @@ export const api = {
   trends: (query?: Query) => get<Record<string, any>>('/dashboard/trends', query),
   costStructure: (query?: Query) => get<Record<string, any>>('/dashboard/cost-structure', query),
   changes: (query?: Query) => get<{ items: DirectionRow[]; total: number }>('/dashboard/changes', query),
+  departureDates: (query?: Query) => get<DepartureDates>('/dashboard/departure-dates', query),
+  sourceGap: (query?: Query) => get<SourceGap>('/dashboard/source-gap', query),
+  priceComposition: (query?: Query) =>
+    get<PriceComposition>('/dashboard/price-composition', query),
+  spread: (query?: Query) => get<Spread>('/dashboard/spread', query),
   quality: (query?: Query) => get<Record<string, any>>('/dashboard/quality', query),
   kpi: (query?: Query) => get<Record<string, any>>('/dashboard/kpi', query),
   scenarioHistory: (id: string, query?: Query) =>
