@@ -6,15 +6,13 @@ import { Link } from 'react-router-dom';
 import { api } from '@/api/client';
 import type { DirectionRow } from '@/api/types';
 import {
-  AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle, SyntheticTag,
+  AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle,
 } from '@/components/common';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
 import { useAsync } from '@/hooks/useAsync';
 import { dateTime, money, num, percent, score, TRANSPORT_LABEL } from '@/utils/format';
-import {
-  AVG_QUALITY_SCORE_HINT, KPI_STABILITY_HINT, QUALITY_SCORE_SHORT_HINT,
-} from '@/utils/hints';
+import { AVG_QUALITY_SCORE_HINT, QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
 
 const { Text } = Typography;
 
@@ -119,15 +117,15 @@ export default function DashboardPage() {
       render: (value: number | null) => money(value),
     },
     {
-      title: '7 дней',
-      dataIndex: 'change_7d',
+      title: '1 день',
+      dataIndex: 'change_1d',
       align: 'right' as const,
-      sorter: (a: DirectionRow, b: DirectionRow) => (a.change_7d ?? 0) - (b.change_7d ?? 0),
+      sorter: (a: DirectionRow, b: DirectionRow) => (a.change_1d ?? 0) - (b.change_1d ?? 0),
       render: (value: number | null) => <ChangeIndicator value={value} />,
     },
     {
-      title: '30 дней',
-      dataIndex: 'change_30d',
+      title: '7 дней',
+      dataIndex: 'change_7d',
       align: 'right' as const,
       render: (value: number | null) => <ChangeIndicator value={value} />,
     },
@@ -197,12 +195,12 @@ export default function DashboardPage() {
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
-              title="Изменение за 30 дней"
-              value={<ChangeIndicator value={data?.change_30d as number} />}
-              hint="Сравнение идет по одному и тому же множеству сценариев."
+              title="Изменение за 1 день"
+              value={<ChangeIndicator value={data?.change_1d as number} />}
+              hint="Сравнение с последним расчетом предыдущих суток по одному и тому же множеству сценариев: иначе изменение отражало бы смену состава, а не динамику рынка."
               extra={
                 <Text type="secondary">
-                  сопоставимых сценариев: {num(data?.comparable_scenarios_30d as number)}
+                  сопоставимых сценариев: {num(data?.comparable_scenarios_1d as number)}
                 </Text>
               }
             />
@@ -234,7 +232,7 @@ export default function DashboardPage() {
         </Row>
 
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col xs={24} sm={8}>
+          <Col xs={24} sm={12} lg={6}>
             <MetricCard
               title="Сценариев в выборке"
               value={num(data?.scenario_count as number)}
@@ -244,20 +242,6 @@ export default function DashboardPage() {
                   {percent(data?.complete_rate as number, 0)})
                 </Text>
               }
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <MetricCard
-              title="KPI стабильности"
-              value={percent(data?.kpi_pass_rate as number, 0)}
-              hint={KPI_STABILITY_HINT}
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <MetricCard
-              title="Синтетические данные"
-              value={data?.contains_synthetic ? 'Присутствуют' : 'Нет'}
-              extra={<SyntheticTag visible={Boolean(data?.contains_synthetic)} />}
             />
           </Col>
         </Row>

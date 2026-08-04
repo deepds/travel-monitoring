@@ -1,13 +1,19 @@
 /** Панель фильтров дашборда. Состав повторяет фильтры /api/v1/dashboard/*. */
 
-import { Button, Card, Checkbox, Col, Row, Select, Slider } from 'antd';
+import { Button, Card, Col, Row, Select } from 'antd';
 import { useMemo } from 'react';
 
 import { api } from '@/api/client';
-import { HelpHint } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
-import { MIN_QUALITY_SCORE_HINT } from '@/utils/hints';
 
+/**
+ * Состав фильтров дашборда.
+ *
+ * Поля `include_synthetic`, `complete_only` и `min_quality_score` остаются в
+ * запросе к API, но органов управления для них нет: на текущем объеме данных
+ * они только сужали и без того небольшую выборку. Значения берутся из
+ * `DEFAULT_FILTERS`.
+ */
 export interface Filters {
   origin?: string;
   destination?: string;
@@ -73,34 +79,6 @@ export function DashboardFilterBar({ value, onChange }: Props) {
             value={value.transport_type}
             onChange={(next) => set('transport_type', next)}
           />
-        </Col>
-        <Col xs={24} sm={12} md={5}>
-          <div style={{ fontSize: 12, color: '#8c8c8c' }}>
-            Мин. оценка качества: {value.min_quality_score ?? 0}
-            <HelpHint text={MIN_QUALITY_SCORE_HINT} />
-          </div>
-          <Slider
-            min={0}
-            max={100}
-            step={5}
-            value={value.min_quality_score ?? 0}
-            onChange={(next) => set('min_quality_score', next === 0 ? undefined : next)}
-          />
-        </Col>
-        <Col xs={24} md={5}>
-          <Checkbox
-            checked={value.complete_only}
-            onChange={(event) => set('complete_only', event.target.checked)}
-          >
-            Только полные расчеты
-          </Checkbox>
-          <br />
-          <Checkbox
-            checked={value.include_synthetic}
-            onChange={(event) => set('include_synthetic', event.target.checked)}
-          >
-            С синтетическими
-          </Checkbox>
         </Col>
       </Row>
       <div style={{ marginTop: 8 }}>

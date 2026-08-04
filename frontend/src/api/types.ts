@@ -390,6 +390,7 @@ export interface DirectionRow {
   median_hotel?: number | null;
   p25?: number | null;
   p75?: number | null;
+  change_1d?: number | null;
   change_7d?: number | null;
   change_30d?: number | null;
   avg_quality_score?: number | null;

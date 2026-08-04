@@ -140,6 +140,9 @@ def overview(
     today = utcnow().date()
 
     current = latest_runs(session, filters)
+    # Суточное окно нужно на старте наблюдения: недельная и месячная динамика
+    # появляются только после накопления истории.
+    day_ago = latest_runs(session, filters, as_of=today - timedelta(days=1))
     week_ago = latest_runs(session, filters, as_of=today - timedelta(days=7))
     month_ago = latest_runs(session, filters, as_of=today - timedelta(days=30))
 
@@ -149,6 +152,9 @@ def overview(
     # Сравнение идет по одному и тому же множеству сценариев: иначе изменение
     # отражало бы смену состава, а не динамику рынка.
     comparable = {run.scenario_id for run in complete}
+    day_median = _median_total(
+        [run for run in day_ago if run.scenario_id in comparable and run.total_estimated_cost]
+    )
     week_median = _median_total(
         [run for run in week_ago if run.scenario_id in comparable and run.total_estimated_cost]
     )
@@ -167,8 +173,12 @@ def overview(
         "scenario_count": len(current),
         "complete_count": len(complete),
         "median_total_cost": round_display(current_median, 0),
+        "change_1d": pct_change(current_median, day_median),
         "change_7d": pct_change(current_median, week_median),
         "change_30d": pct_change(current_median, month_median),
+        "comparable_scenarios_1d": sum(
+            1 for run in day_ago if run.scenario_id in comparable and run.total_estimated_cost
+        ),
         "comparable_scenarios_7d": sum(
             1 for run in week_ago if run.scenario_id in comparable and run.total_estimated_cost
         ),
@@ -213,6 +223,9 @@ def directions(
     filters = filters or DashboardFilters()
     today = utcnow().date()
     current = latest_runs(session, filters)
+    day_ago = {
+        run.scenario_id: run for run in latest_runs(session, filters, as_of=today - timedelta(days=1))
+    }
     week_ago = {
         run.scenario_id: run for run in latest_runs(session, filters, as_of=today - timedelta(days=7))
     }
@@ -235,6 +248,9 @@ def directions(
     for (origin, destination, transport), runs in sorted(grouped.items()):
         complete = [run for run in runs if run.total_estimated_cost is not None]
         current_median = _median_total(complete)
+        day_median = _median_total(
+            [day_ago[run.scenario_id] for run in complete if run.scenario_id in day_ago]
+        )
         week_median = _median_total(
             [week_ago[run.scenario_id] for run in complete if run.scenario_id in week_ago]
         )
@@ -265,6 +281,7 @@ def directions(
                 "p75": round_display(
                     median([to_decimal(r.total_p75) for r in complete if r.total_p75]), 0
                 ),
+                "change_1d": pct_change(current_median, day_median),
                 "change_7d": pct_change(current_median, week_median),
                 "change_30d": pct_change(current_median, month_median),
                 "avg_quality_score": _avg(
