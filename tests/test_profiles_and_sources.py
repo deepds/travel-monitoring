@@ -227,6 +227,18 @@ class TestSources:
 
 
 class TestExport:
+    def test_viewer_may_export(self, client, viewer_headers):
+        """Выгрузка своих наблюдений — обычная работа бизнес-пользователя.
+
+        Подотчетность обеспечивает запись в аудит, а не запрет на действие.
+        """
+        created = client.post(
+            "/api/v1/exports",
+            json={"dataset": "SCENARIO_RUNS", "format": "CSV"},
+            headers=viewer_headers,
+        )
+        assert created.status_code in (200, 202), created.text
+
     def test_csv_export_contains_quality_fields(self, client, analyst_headers):
         created = client.post(
             "/api/v1/exports",

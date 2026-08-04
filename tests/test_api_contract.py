@@ -160,6 +160,8 @@ class TestOpenApi:
             "/api/v1/market-snapshots/{snapshot_id}/recalculate",
             "/api/v1/scenario-runs/{run_id}/explain",
             "/api/v1/scenario-runs/{run_id}/source-breakdown",
+            "/api/v1/scenario-runs/{run_id}/offers",
+            "/api/v1/scenario-runs/{run_id}/rail-comparison",
             "/api/v1/dashboard/overview",
             "/api/v1/sources/{source_id}/confidence",
             "/api/v1/calculation-profiles",

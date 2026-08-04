@@ -9,18 +9,21 @@ import { useAsync } from '@/hooks/useAsync';
 /**
  * Состав фильтров дашборда.
  *
- * Поля `include_synthetic`, `complete_only` и `min_quality_score` остаются в
- * запросе к API, но органов управления для них нет: на текущем объеме данных
- * они только сужали и без того небольшую выборку. Значения берутся из
- * `DEFAULT_FILTERS`.
+ * Поля `include_synthetic` и `complete_only` остаются в запросе к API, но
+ * органов управления для них нет: на текущем объеме данных они только сужали
+ * и без того небольшую выборку. Значения берутся из `DEFAULT_FILTERS`.
  */
 export interface Filters {
   origin?: string;
   destination?: string;
+  /**
+   * Фильтр по виду транспорта на дашборде не выводится: он спрятал бы половину
+   * сравнения «Авиа против ЖД». Поле сохранено — им пользуются экраны
+   * администратора и выгрузка.
+   */
   transport_type?: string;
   include_synthetic: boolean;
   complete_only: boolean;
-  min_quality_score?: number;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -67,19 +70,6 @@ export function DashboardFilterBar({ value, onChange }: Props) {
             onChange={(next) => set('destination', next)}
           />
         </Col>
-        <Col xs={24} sm={12} md={4}>
-          <Select
-            allowClear
-            placeholder="Транспорт"
-            style={{ width: '100%' }}
-            options={[
-              { value: 'AVIA', label: 'Авиа' },
-              { value: 'RAIL', label: 'ЖД' },
-            ]}
-            value={value.transport_type}
-            onChange={(next) => set('transport_type', next)}
-          />
-        </Col>
       </Row>
       <div style={{ marginTop: 8 }}>
         <Button size="small" onClick={() => onChange(DEFAULT_FILTERS)}>
@@ -97,5 +87,4 @@ export const toQuery = (filters: Filters): Record<string, string | number | bool
   transport_type: filters.transport_type,
   include_synthetic: filters.include_synthetic,
   complete_only: filters.complete_only,
-  min_quality_score: filters.min_quality_score,
 });

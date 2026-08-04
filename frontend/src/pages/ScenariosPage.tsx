@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { ApiError, api } from '@/api/client';
 import type { ScenarioBrief } from '@/api/types';
 import { AsyncBlock, PageTitle } from '@/components/common';
+import { ExportButton } from '@/components/ExportButton';
 import { ScenarioCreateModal, ScenarioDeleteModal } from '@/components/ScenarioDialogs';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
@@ -61,13 +62,25 @@ export default function ScenariosPage() {
     <>
       <PageTitle
         title="Сценарии наблюдения"
-        subtitle="Каждая уникальная комбинация параметров — отдельный сценарий со стабильным отпечатком"
+        subtitle="Каждая уникальная комбинация маршрута, дат и состава — отдельный сценарий"
         extra={
-          can('ADMIN') ? (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              Создать сценарий
-            </Button>
-          ) : null
+          <Space wrap>
+            {/*
+              Набора данных «Сценарии» в API нет, поэтому выгружаются расчеты по
+              текущим направлениям — это и написано на кнопке, чтобы результат
+              не расходился с ожиданием.
+            */}
+            <ExportButton
+              dataset="SCENARIO_RUNS"
+              filters={{ origin, destination, transport_type: transport }}
+              label="Выгрузить расчеты"
+            />
+            {can('ADMIN') ? (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                Создать сценарий
+              </Button>
+            ) : null}
+          </Space>
         }
       />
 

@@ -407,6 +407,59 @@ export const TRANSPORT_LABEL: Record<string, string> = {
   RAIL: 'ЖД',
 };
 
+/**
+ * Метки компонентных статусов уже определены выше (COMPONENT_STATUS_LABEL);
+ * здесь только обертка с запасным вариантом на случай нового значения в API.
+ */
+export const componentStatusLabel = (status: string): string =>
+  COMPONENT_STATUS_LABEL[status] ?? status;
+
+export const REFUNDABILITY_LABEL: Record<string, string> = {
+  REFUNDABLE: 'Возвратный',
+  NON_REFUNDABLE: 'Невозвратный',
+  UNKNOWN: 'Не указано',
+};
+
+export const BAGGAGE_LABEL: Record<string, string> = {
+  CABIN_BAGGAGE: 'Ручная кладь',
+  CHECKED_BAGGAGE: 'С багажом',
+  UNKNOWN: 'Не указано',
+};
+
+export const SOURCE_LABEL: Record<string, string> = {
+  tutu_mcp: 'Туту',
+  rzd: 'РЖД',
+};
+
+export const sourceLabel = (code: string): string => SOURCE_LABEL[code] ?? code;
+
+/** Длительность в пути: «8 ч 15 мин». */
+export const duration = (minutes: number | null | undefined): string => {
+  if (minutes === null || minutes === undefined) return '—';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!hours) return `${rest} мин`;
+  return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+};
+
+/** Только время отправления или прибытия: «21:50». */
+export const timeOnly = (value: string | null | undefined): string => {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+};
+
+/** Дата и время без года: «18.09, 21:50» — год виден из параметров сценария. */
+export const dayTime = (value: string | null | undefined): string => {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const day = parsed.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  return `${day}, ${timeOnly(value)}`;
+};
+
 export const ACCOMMODATION_LABEL: Record<string, string> = {
   HOTEL: 'Гостиница',
   APARTMENT: 'Апартаменты',

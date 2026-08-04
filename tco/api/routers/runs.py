@@ -8,15 +8,17 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from tco.api.deps import PaginationDep, SessionDep, ViewerDep, get_or_404
 from tco.api.serializers import run_brief, run_full, scenario_full, snapshot_brief
-from tco.core.enums import ConfidenceLevel, RunStatus, RunType, TransportType
+from tco.core.enums import ConfidenceLevel, OfferType, RunStatus, RunType, TransportType
 from tco.core.logging import get_logger
 from tco.db.models.reference import City
 from tco.db.models.run import ScenarioRun
 from tco.db.models.scenario import TravelScenario
 from tco.db.models.snapshot import MarketSnapshot
+from tco.services import offers as offer_service
 from tco.version import METRIC_DISCLAIMER_RU, METRIC_TITLE_RU
 
 logger = get_logger(__name__)
@@ -146,6 +148,97 @@ def explain(run_id: str, session: SessionDep, _: ViewerDep) -> dict[str, Any]:
         "error_summary": list(run.error_summary or []),
         "metric_title": METRIC_TITLE_RU,
         "disclaimer": METRIC_DISCLAIMER_RU,
+    }
+
+
+def _run_snapshot(session: Session, run: ScenarioRun) -> MarketSnapshot | None:
+    if not run.market_snapshot_id:
+        return None
+    return session.get(MarketSnapshot, run.market_snapshot_id)
+
+
+@router.get("/{run_id}/offers", summary="Предложения, на которых построен расчет")
+def run_offers(
+    run_id: str,
+    session: SessionDep,
+    _: ViewerDep,
+    page: PaginationDep,
+    offer_type: OfferType | None = None,
+    source_code: str | None = None,
+    valid_only: bool = False,
+    exclude_outliers: bool = False,
+) -> dict[str, Any]:
+    """Полный список предложений расчета.
+
+    В отличие от эндпоинта снимка, отсутствие предложений отдается кодом 200 с
+    признаком ``offers_available: false``: расчет старше срока хранения — это
+    объяснимое состояние, а не ошибка запроса.
+    """
+    run = get_or_404(session, ScenarioRun, run_id, "Расчет")
+    snapshot = _run_snapshot(session, run)
+    if snapshot is None:
+        return offer_service.unavailable("NO_SNAPSHOT", page, run_id=str(run.id))
+    if not snapshot.offers_available:
+        return offer_service.unavailable(
+            "PURGED",
+            page,
+            run_id=str(run.id),
+            snapshot_id=str(snapshot.id),
+            offers_purged_at=snapshot.offers_purged_at.isoformat()
+            if snapshot.offers_purged_at
+            else None,
+        )
+
+    return {
+        "run_id": str(run.id),
+        **offer_service.paged_offers(
+            session,
+            snapshot,
+            page,
+            offer_type=offer_type,
+            source_code=source_code,
+            valid_only=valid_only,
+            exclude_outliers=exclude_outliers,
+        ),
+    }
+
+
+@router.get("/{run_id}/rail-comparison", summary="Сравнение источников по ЖД")
+def rail_comparison(
+    run_id: str,
+    session: SessionDep,
+    _: ViewerDep,
+    cross_source_only: bool = False,
+    include_excluded: bool = False,
+) -> dict[str, Any]:
+    """Цены разных источников на одни и те же поезда.
+
+    Предложения группируются по ключу эквивалентности, который нормализатор
+    строит из номера поезда, дат и класса вагона без учета источника, — это
+    позволяет сопоставить Туту и РЖД «поезд с поездом».
+    """
+    run = get_or_404(session, ScenarioRun, run_id, "Расчет")
+    snapshot = _run_snapshot(session, run)
+    if snapshot is None:
+        return offer_service.unavailable("NO_SNAPSHOT", run_id=str(run.id))
+    if not snapshot.offers_available:
+        return offer_service.unavailable(
+            "PURGED",
+            run_id=str(run.id),
+            snapshot_id=str(snapshot.id),
+            offers_purged_at=snapshot.offers_purged_at.isoformat()
+            if snapshot.offers_purged_at
+            else None,
+        )
+
+    return {
+        "run_id": str(run.id),
+        **offer_service.rail_comparison(
+            session,
+            snapshot,
+            cross_source_only=cross_source_only,
+            include_excluded=include_excluded,
+        ),
     }
 
 

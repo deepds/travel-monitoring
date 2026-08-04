@@ -36,16 +36,24 @@ interface NavItem {
   minRole: 'VIEWER' | 'ANALYST' | 'ADMIN';
 }
 
+/**
+ * Основная навигация — четыре пункта: стоимость, расчет, сценарии, результаты.
+ *
+ * Технические экраны (снимки, источники, профили, задачи, экспорт, аудит) не
+ * удалены, а скрыты под роль ADMIN: они нужны при разборе инцидента, но для
+ * бизнес-пользователя это шум, за которым теряется сама цифра стоимости.
+ * Маршруты остаются доступны по прямой ссылке.
+ */
 const NAV: NavItem[] = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: 'Дашборд', minRole: 'VIEWER' },
   { key: '/constructor', icon: <CalculatorOutlined />, label: 'Расчет сценария', minRole: 'ANALYST' },
   { key: '/scenarios', icon: <UnorderedListOutlined />, label: 'Сценарии', minRole: 'VIEWER' },
   { key: '/runs', icon: <AreaChartOutlined />, label: 'Расчеты', minRole: 'VIEWER' },
-  { key: '/snapshots', icon: <CameraOutlined />, label: 'Снимки рынка', minRole: 'VIEWER' },
-  { key: '/sources', icon: <ApiOutlined />, label: 'Источники', minRole: 'VIEWER' },
-  { key: '/profiles', icon: <ExperimentOutlined />, label: 'Профили расчета', minRole: 'VIEWER' },
-  { key: '/jobs', icon: <ThunderboltOutlined />, label: 'Задачи', minRole: 'VIEWER' },
-  { key: '/exports', icon: <DownloadOutlined />, label: 'Экспорт', minRole: 'ANALYST' },
+  { key: '/snapshots', icon: <CameraOutlined />, label: 'Снимки рынка', minRole: 'ADMIN' },
+  { key: '/sources', icon: <ApiOutlined />, label: 'Источники', minRole: 'ADMIN' },
+  { key: '/profiles', icon: <ExperimentOutlined />, label: 'Профили расчета', minRole: 'ADMIN' },
+  { key: '/jobs', icon: <ThunderboltOutlined />, label: 'Задачи', minRole: 'ADMIN' },
+  { key: '/exports', icon: <DownloadOutlined />, label: 'Экспорт', minRole: 'ADMIN' },
   { key: '/admin', icon: <SettingOutlined />, label: 'Администрирование', minRole: 'ADMIN' },
   { key: '/audit', icon: <AuditOutlined />, label: 'Аудит', minRole: 'ADMIN' },
 ];

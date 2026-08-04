@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Any
 
 from tco.db.models.job import AuditEvent, ExportArtifact
-from tco.db.models.offer import Offer
+from tco.db.models.offer import AccommodationOffer, FlightOffer, Offer, RailOffer
 from tco.db.models.profile import CalculationProfile
 from tco.db.models.reference import City, ScenarioTemplate
 from tco.db.models.run import ScenarioRun
@@ -278,6 +278,105 @@ def run_full(run: ScenarioRun) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _rail_detail(item: RailOffer) -> dict[str, Any]:
+    return {
+        "origin_station_code": item.origin_station_code,
+        "origin_station_name": item.origin_station_name,
+        "destination_station_code": item.destination_station_code,
+        "destination_station_name": item.destination_station_name,
+        "origin_city_name": item.origin_city_name,
+        "destination_city_name": item.destination_city_name,
+        "outbound_train_number": item.outbound_train_number,
+        "inbound_train_number": item.inbound_train_number,
+        "outbound_departure_at": _iso(item.outbound_departure_at),
+        "outbound_arrival_at": _iso(item.outbound_arrival_at),
+        "inbound_departure_at": _iso(item.inbound_departure_at),
+        "inbound_arrival_at": _iso(item.inbound_arrival_at),
+        "outbound_duration_minutes": item.outbound_duration_minutes,
+        "inbound_duration_minutes": item.inbound_duration_minutes,
+        "carriers": list(item.carriers or []),
+        "car_type": item.car_type,
+        "car_type_raw": item.car_type_raw,
+        "service_classes": list(item.service_classes or []),
+        "available_places_outbound": item.available_places_outbound,
+        "available_places_inbound": item.available_places_inbound,
+        "is_two_storey": item.is_two_storey,
+        "price_per_place_outbound": _money(item.price_per_place_outbound),
+        "price_per_place_inbound": _money(item.price_per_place_inbound),
+        "passenger_count": item.passenger_count,
+        "is_round_trip": item.is_round_trip,
+        "refundability": item.refundability,
+    }
+
+
+def _flight_detail(item: FlightOffer) -> dict[str, Any]:
+    return {
+        "origin_code": item.origin_code,
+        "origin_name": item.origin_name,
+        "destination_code": item.destination_code,
+        "destination_name": item.destination_name,
+        "outbound_departure_at": _iso(item.outbound_departure_at),
+        "outbound_arrival_at": _iso(item.outbound_arrival_at),
+        "inbound_departure_at": _iso(item.inbound_departure_at),
+        "inbound_arrival_at": _iso(item.inbound_arrival_at),
+        "outbound_stops": item.outbound_stops,
+        "inbound_stops": item.inbound_stops,
+        "outbound_duration_minutes": item.outbound_duration_minutes,
+        "inbound_duration_minutes": item.inbound_duration_minutes,
+        "marketing_carriers": list(item.marketing_carriers or []),
+        "flight_numbers": list(item.flight_numbers or []),
+        "cabin_class": item.cabin_class,
+        "fare_family": item.fare_family,
+        "baggage_type": item.baggage_type,
+        "baggage_raw": item.baggage_raw,
+        "refundability": item.refundability,
+        "is_round_trip": item.is_round_trip,
+        "passenger_count": item.passenger_count,
+    }
+
+
+def _accommodation_detail(item: AccommodationOffer) -> dict[str, Any]:
+    return {
+        "property_name": item.property_name,
+        "property_key": item.property_key,
+        "accommodation_type": item.accommodation_type,
+        "accommodation_type_raw": item.accommodation_type_raw,
+        "stars": item.stars,
+        "stars_status": item.stars_status,
+        "address": item.address,
+        "city_name": item.city_name,
+        "check_in": _iso(item.check_in),
+        "check_out": _iso(item.check_out),
+        "nights": item.nights,
+        "room_name": item.room_name,
+        "room_count": item.room_count,
+        "max_guests": item.max_guests,
+        "capacity_confirmed": item.capacity_confirmed,
+        "adults": item.adults,
+        "children_ages": list(item.children_ages or []),
+        "meal_type": item.meal_type,
+        "meal_raw": item.meal_raw,
+        "cancellation_type": item.cancellation_type,
+        "review_score": item.review_score,
+        "review_count": item.review_count,
+    }
+
+
+def _offer_detail(item: Offer) -> dict[str, Any] | None:
+    """Специализированная часть предложения; тип различается по ``offer_type``.
+
+    Сырые JSONB-массивы (segments, amenities) намеренно не отдаются: они
+    неограниченного размера и не используются интерфейсом.
+    """
+    if item.rail is not None:
+        return _rail_detail(item.rail)
+    if item.flight is not None:
+        return _flight_detail(item.flight)
+    if item.accommodation is not None:
+        return _accommodation_detail(item.accommodation)
+    return None
+
+
 def offer(item: Offer) -> dict[str, Any]:
     return {
         "id": str(item.id),
@@ -303,6 +402,8 @@ def offer(item: Offer) -> dict[str, Any]:
         "matches_profile": item.matches_profile,
         "normalization_version": item.normalization_version,
         "raw_object_ref": item.raw_object_ref,
+        "deeplink": item.deeplink,
+        "detail": _offer_detail(item),
     }
 
 

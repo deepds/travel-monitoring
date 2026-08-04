@@ -204,6 +204,7 @@ export interface Run extends RunBrief {
   served_from_cache: boolean;
   error_summary: unknown[];
   scenario_detail?: Scenario | null;
+  snapshot?: SnapshotBrief;
   disclaimer?: string;
 }
 
@@ -272,6 +273,89 @@ export interface SnapshotSourceRow {
   collected_at: string;
 }
 
+export type OfferKind = 'FLIGHT' | 'RAIL' | 'ACCOMMODATION';
+
+export interface RailOfferDetail {
+  origin_station_code: string | null;
+  origin_station_name: string | null;
+  destination_station_code: string | null;
+  destination_station_name: string | null;
+  origin_city_name: string | null;
+  destination_city_name: string | null;
+  outbound_train_number: string | null;
+  inbound_train_number: string | null;
+  outbound_departure_at: string | null;
+  outbound_arrival_at: string | null;
+  inbound_departure_at: string | null;
+  inbound_arrival_at: string | null;
+  outbound_duration_minutes: number | null;
+  inbound_duration_minutes: number | null;
+  carriers: string[];
+  car_type: string | null;
+  car_type_raw: string | null;
+  service_classes: string[];
+  available_places_outbound: number | null;
+  available_places_inbound: number | null;
+  is_two_storey: boolean | null;
+  price_per_place_outbound: number | null;
+  price_per_place_inbound: number | null;
+  passenger_count: number;
+  is_round_trip: boolean;
+  refundability: string;
+}
+
+export interface FlightOfferDetail {
+  origin_code: string | null;
+  origin_name: string | null;
+  destination_code: string | null;
+  destination_name: string | null;
+  outbound_departure_at: string | null;
+  outbound_arrival_at: string | null;
+  inbound_departure_at: string | null;
+  inbound_arrival_at: string | null;
+  outbound_stops: number | null;
+  inbound_stops: number | null;
+  outbound_duration_minutes: number | null;
+  inbound_duration_minutes: number | null;
+  marketing_carriers: string[];
+  flight_numbers: string[];
+  cabin_class: string | null;
+  fare_family: string | null;
+  baggage_type: string;
+  baggage_raw: string | null;
+  refundability: string;
+  is_round_trip: boolean;
+  passenger_count: number;
+}
+
+export interface AccommodationOfferDetail {
+  property_name: string | null;
+  property_key: string | null;
+  accommodation_type: string;
+  accommodation_type_raw: string | null;
+  stars: number | null;
+  stars_status: string;
+  address: string | null;
+  city_name: string | null;
+  check_in: string | null;
+  check_out: string | null;
+  nights: number | null;
+  room_name: string | null;
+  room_count: number;
+  max_guests: number | null;
+  capacity_confirmed: boolean;
+  adults: number | null;
+  children_ages: number[];
+  meal_type: string;
+  meal_raw: string | null;
+  cancellation_type: string;
+  review_score: number | null;
+  review_count: number | null;
+}
+
+/** Какой из трех наборов пришел, определяется полем `offer_type`. */
+export type OfferDetail = RailOfferDetail | FlightOfferDetail | AccommodationOfferDetail;
+
 export interface Offer {
   id: string;
   source_code: string;
@@ -283,9 +367,82 @@ export interface Offer {
   classification_status: string;
   exclusion_reason: string;
   exclusion_detail: string | null;
+  equivalence_group_id?: string | null;
   is_duplicate: boolean;
   is_outlier: boolean;
   matches_profile: boolean;
+  deeplink?: string | null;
+  detail?: OfferDetail | null;
+}
+
+/** Ответ, когда предложений нет по объяснимой причине (снимок очищен). */
+export interface OffersUnavailable {
+  offers_available: false;
+  reason: 'NO_SNAPSHOT' | 'PURGED';
+  offers_purged_at?: string | null;
+  items: [];
+  groups: [];
+}
+
+export type RunOffersResponse =
+  | (Paged<Offer> & { offers_available: true; run_id: string; snapshot_id: string })
+  | (OffersUnavailable & { run_id: string; meta: Paged<Offer>['meta'] });
+
+export interface RailPriceEntry {
+  offer_id: string;
+  total_price: number | null;
+  price_per_place_outbound: number | null;
+  price_per_place_inbound: number | null;
+  available_places_outbound: number | null;
+  available_places_inbound: number | null;
+  exclusion_reason: string;
+  is_outlier: boolean;
+  deeplink: string | null;
+}
+
+export interface RailComparisonGroup {
+  equivalence_group_id: string | null;
+  outbound_train_number: string | null;
+  inbound_train_number: string | null;
+  outbound_departure_at: string | null;
+  outbound_arrival_at: string | null;
+  inbound_departure_at: string | null;
+  inbound_arrival_at: string | null;
+  outbound_duration_minutes: number | null;
+  inbound_duration_minutes: number | null;
+  car_type: string | null;
+  car_type_raw: string | null;
+  origin_station_name: string | null;
+  destination_station_name: string | null;
+  carriers: string[];
+  sources_disagree_on_schedule: boolean;
+  car_type_ambiguous: boolean;
+  prices: Record<string, RailPriceEntry>;
+  min_price: number | null;
+  max_price: number | null;
+  delta_absolute: number | null;
+  delta_ratio: number | null;
+  cheapest_source: string | null;
+  source_count: number;
+}
+
+export interface RailComparisonSummary {
+  group_count: number;
+  cross_source_group_count: number;
+  single_source_group_count: number;
+  median_delta_ratio: number | null;
+  max_delta_ratio: number | null;
+}
+
+export interface RailComparison {
+  run_id: string;
+  snapshot_id?: string;
+  offers_available: boolean;
+  reason?: 'NO_SNAPSHOT' | 'PURGED';
+  sources: string[];
+  groups: RailComparisonGroup[];
+  truncated: boolean;
+  summary: RailComparisonSummary;
 }
 
 export interface Source {
@@ -420,13 +577,19 @@ export interface DirectionRow {
   confidence_levels?: Record<string, number>;
   last_update?: string | null;
   contains_synthetic?: boolean;
-  // Эндпоинт /dashboard/changes возвращает строки другой формы.
+  // Эндпоинт /dashboard/changes возвращает строки другой формы:
+  // направление приходит как origin/destination (названия городов), а не
+  // как origin_city_name/destination_city_name.
   scenario_id?: string;
   scenario_code?: string;
-  route?: string;
+  scenario_name?: string;
+  origin?: string;
+  destination?: string;
   previous_total?: number | null;
   current_total?: number | null;
   change?: number | null;
+  direction?: 'UP' | 'DOWN';
+  observation_date?: string;
 }
 
 export interface Template {

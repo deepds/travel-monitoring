@@ -7,10 +7,10 @@
 
 import type {
   ApiErrorBody, AuditEvent, City, DashboardOverview, DirectionRow, HealthResponse,
-  Job, JobEvent, Offer, Paged, Principal, Profile, RefOption, Run, RunBrief,
-  Scenario, ScenarioBrief, ScenarioFootprint, Snapshot, SnapshotBrief, SnapshotSourceRow, Source,
-  SourceBreakdownRow, SourceConfidence, SourceOverviewRow, Template, TokenResponse,
-  VersionInfo,
+  Job, JobEvent, Offer, Paged, Principal, Profile, RailComparison, RefOption, Run,
+  RunBrief, RunOffersResponse, Scenario, ScenarioBrief, ScenarioFootprint, Snapshot,
+  SnapshotBrief, SnapshotSourceRow, Source, SourceBreakdownRow, SourceConfidence,
+  SourceOverviewRow, Template, TokenResponse, VersionInfo,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api/v1';
@@ -154,6 +154,10 @@ export const api = {
   runExplain: (id: string) => get<Record<string, any>>(`/scenario-runs/${id}/explain`),
   runSourceBreakdown: (id: string) =>
     get<{ rows?: SourceBreakdownRow[]; [key: string]: unknown }>(`/scenario-runs/${id}/source-breakdown`),
+  runOffers: (id: string, query?: Query) =>
+    get<RunOffersResponse>(`/scenario-runs/${id}/offers`, query),
+  runRailComparison: (id: string, query?: Query) =>
+    get<RailComparison>(`/scenario-runs/${id}/rail-comparison`, query),
 
   // --- Снимки рынка ---
   snapshots: (query?: Query) => get<Paged<SnapshotBrief>>('/market-snapshots', query),

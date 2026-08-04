@@ -11,13 +11,30 @@ import {
 import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
+import { TransportModeCard } from '@/components/TransportModeCard';
 import { useAsync } from '@/hooks/useAsync';
-import { dateTime, money, num, percent, score, TRANSPORT_LABEL } from '@/utils/format';
-import {
-  AVG_QUALITY_SCORE_HINT, MIN_MAX_HINT, P25_P75_HINT, QUALITY_SCORE_SHORT_HINT,
-} from '@/utils/hints';
+import { dateOnly, dateTime, money, num, percent, TRANSPORT_LABEL } from '@/utils/format';
+import { MIN_MAX_HINT, P25_P75_HINT } from '@/utils/hints';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
+
+/** Наблюдение считается свежим, если данные не старше суток мониторинга с запасом. */
+const FRESH_DAYS = 2;
+
+function SectionTitle({ children, hint }: { children: string; hint?: string }) {
+  return (
+    <div style={{ margin: '24px 0 12px' }}>
+      <Title level={5} style={{ margin: 0 }}>
+        {children}
+      </Title>
+      {hint ? (
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          {hint}
+        </Text>
+      ) : null}
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -84,6 +101,22 @@ export default function DashboardPage() {
     };
   }, [structure.data]);
 
+  /**
+   * Полнота наблюдений в бизнес-формулировке: по скольким направлениям данные
+   * свежие. Считается на клиенте из last_update каждой строки — отдельного
+   * агрегата на бэкенде для этого не нужно.
+   */
+  const freshness = useMemo(() => {
+    const rows = directions.data?.items ?? [];
+    const threshold = Date.now() - FRESH_DAYS * 24 * 60 * 60 * 1000;
+    const fresh = rows.filter((row) => {
+      if (!row.last_update) return false;
+      const parsed = new Date(row.last_update).getTime();
+      return !Number.isNaN(parsed) && parsed >= threshold;
+    }).length;
+    return { fresh, total: rows.length };
+  }, [directions.data]);
+
   const directionColumns = [
     {
       title: 'Направление',
@@ -146,12 +179,6 @@ export default function DashboardPage() {
       render: (value: number | null) => <ChangeIndicator value={value} />,
     },
     {
-      title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
-      dataIndex: 'avg_quality_score',
-      align: 'right' as const,
-      render: (value: number | null) => score(value),
-    },
-    {
       title: 'Сценариев',
       key: 'count',
       align: 'right' as const,
@@ -184,11 +211,15 @@ export default function DashboardPage() {
 
       <DashboardFilterBar value={filters} onChange={setFilters} />
 
+      <SectionTitle hint="Медианы по всем направлениям, попавшим в фильтр">
+        Сколько стоит поездка
+      </SectionTitle>
+
       <AsyncBlock loading={overview.loading} error={overview.error}>
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]}>
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
-              title="Типовая стоимость (медиана)"
+              title="Типовая стоимость"
               value={money(data?.median_total_cost as number)}
               hint="Медиана итоговой стоимости по всем полным расчетам выборки."
               extra={
@@ -215,36 +246,16 @@ export default function DashboardPage() {
             <MetricCard
               title="Доля транспорта"
               value={percent(data?.median_transport_share as number)}
-              hint="Медианная доля транспорта в итоговой стоимости."
+              hint="Сколько в типовой стоимости приходится на проезд, а не на проживание."
             />
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
-              title="Средняя оценка качества"
-              value={score(data?.avg_quality_score as number)}
-              hint={AVG_QUALITY_SCORE_HINT}
-              extra={
-                <span>
-                  <Tag color="success">
-                    успешных {percent(data?.success_rate as number, 0)}
-                  </Tag>
-                  <Tag color="warning">
-                    частичных {percent(data?.partial_rate as number, 0)}
-                  </Tag>
-                </span>
-              }
-            />
-          </Col>
-        </Row>
-
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col xs={24} sm={12} lg={6}>
-            <MetricCard
-              title="Сценариев в выборке"
+              title="Направлений под наблюдением"
               value={num(data?.scenario_count as number)}
               extra={
                 <Text type="secondary">
-                  полных расчетов: {num(data?.complete_count as number)} (
+                  с полной оценкой: {num(data?.complete_count as number)} (
                   {percent(data?.complete_rate as number, 0)})
                 </Text>
               }
@@ -253,7 +264,11 @@ export default function DashboardPage() {
         </Row>
       </AsyncBlock>
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+      <SectionTitle hint="Динамика типовой стоимости и ее состав">
+        Как цена меняется
+      </SectionTitle>
+
+      <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
           <Card
             title="Динамика стоимости"
@@ -310,7 +325,7 @@ export default function DashboardPage() {
         </Col>
       </Row>
 
-      <Card title="Сравнение направлений" size="small" style={{ marginBottom: 16 }}>
+      <Card title="Сравнение направлений" size="small" style={{ marginTop: 16 }}>
         <AsyncBlock
           loading={directions.loading}
           error={directions.error}
@@ -325,12 +340,12 @@ export default function DashboardPage() {
             dataSource={directions.data?.items ?? []}
             columns={directionColumns}
             pagination={{ pageSize: 20, hideOnSinglePage: true }}
-            scroll={{ x: 1200 }}
+            scroll={{ x: 1100 }}
           />
         </AsyncBlock>
       </Card>
 
-      <Card title="Существенные изменения за 7 дней" size="small">
+      <Card title="Существенные изменения за 7 дней" size="small" style={{ marginTop: 16 }}>
         <AsyncBlock
           loading={changes.loading}
           error={changes.error}
@@ -353,8 +368,20 @@ export default function DashboardPage() {
                     value
                   ),
               },
-              { title: 'Направление', dataIndex: 'route', render: (v: string, row: any) =>
-                  v ?? `${row.origin_city_name ?? ''} → ${row.destination_city_name ?? ''}` },
+              {
+                // Эндпоинт /dashboard/changes отдает направление как
+                // origin/destination — названия городов, а не коды.
+                title: 'Направление',
+                key: 'route',
+                render: (_: unknown, row: DirectionRow) => (
+                  <span>
+                    {row.origin ?? '—'} → {row.destination ?? '—'}{' '}
+                    {row.transport_type ? (
+                      <Tag>{TRANSPORT_LABEL[row.transport_type] ?? row.transport_type}</Tag>
+                    ) : null}
+                  </span>
+                ),
+              },
               {
                 title: 'Было',
                 dataIndex: 'previous_total',
@@ -377,6 +404,63 @@ export default function DashboardPage() {
           />
         </AsyncBlock>
       </Card>
+
+      <SectionTitle hint="Только те направления, где наблюдаются оба способа проезда">
+        Авиа против ЖД
+      </SectionTitle>
+
+      {/* Фильтр по транспорту сюда не передается: он спрятал бы половину сравнения. */}
+      <TransportModeCard query={{ ...query, transport_type: undefined }} />
+
+      <SectionTitle hint="Насколько данные под наблюдением актуальны">
+        Полнота наблюдений
+      </SectionTitle>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} lg={8}>
+          <MetricCard
+            title="Данные обновлены"
+            value={data?.last_update ? dateOnly(data.last_update as string) : '—'}
+            extra={
+              <Text type="secondary">
+                {data?.last_update ? dateTime(data.last_update as string) : 'наблюдений еще нет'}
+              </Text>
+            }
+          />
+        </Col>
+        <Col xs={24} sm={12} lg={8}>
+          <MetricCard
+            title="Направлений со свежими данными"
+            value={
+              freshness.total
+                ? `${num(freshness.fresh)} из ${num(freshness.total)}`
+                : '—'
+            }
+            hint={`Свежими считаются данные не старше ${FRESH_DAYS} дней.`}
+            extra={
+              freshness.total && freshness.fresh < freshness.total ? (
+                <Text type="warning">
+                  по {num(freshness.total - freshness.fresh)} направлениям данные устарели
+                </Text>
+              ) : (
+                <Text type="secondary">все наблюдения актуальны</Text>
+              )
+            }
+          />
+        </Col>
+        <Col xs={24} sm={12} lg={8}>
+          <MetricCard
+            title="Расчетов с полной оценкой"
+            value={percent(data?.complete_rate as number, 0)}
+            hint="Полная оценка — это расчет, где определены и проезд, и проживание."
+            extra={
+              <Text type="secondary">
+                {num(data?.complete_count as number)} из {num(data?.scenario_count as number)}
+              </Text>
+            }
+          />
+        </Col>
+      </Row>
     </>
   );
 }

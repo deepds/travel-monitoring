@@ -25,9 +25,6 @@ from tco.api.deps import (
 )
 from tco.api.dispatch import dispatch
 from tco.api.serializers import (
-    offer as offer_payload,
-)
-from tco.api.serializers import (
     run_brief,
     snapshot_brief,
     snapshot_full,
@@ -39,12 +36,10 @@ from tco.core.enums import (
     OfferType,
     SnapshotStatus,
     SnapshotType,
-    ValidityStatus,
 )
 from tco.core.errors import ConflictError, NotFoundError
 from tco.core.logging import get_logger
 from tco.core.utils import utcnow
-from tco.db.models.offer import Offer
 from tco.db.models.profile import CalculationProfile
 from tco.db.models.raw import HtmlSnapshot, RawResponse
 from tco.db.models.run import ScenarioRun
@@ -53,6 +48,7 @@ from tco.db.models.snapshot import MarketSnapshot, SnapshotSourceResult
 from tco.engine.fingerprint import job_idempotency_key
 from tco.services import audit
 from tco.services import jobs as job_service
+from tco.services import offers as offer_service
 
 logger = get_logger(__name__)
 
@@ -156,31 +152,15 @@ def snapshot_offers(
             details={"offers_purged_at": snapshot.offers_purged_at.isoformat()},
         )
 
-    stmt = select(Offer).where(Offer.market_snapshot_id == snapshot.id)
-    if offer_type:
-        stmt = stmt.where(Offer.offer_type == offer_type.value)
-    if source_code:
-        stmt = stmt.where(Offer.source_code == source_code)
-    if valid_only:
-        stmt = stmt.where(Offer.validity_status == ValidityStatus.VALID.value)
-    if exclude_outliers:
-        stmt = stmt.where(Offer.is_outlier.is_(False))
-
-    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = session.scalars(
-        stmt.order_by(Offer.total_price).offset(page.offset).limit(page.limit)
-    ).all()
-
-    return {
-        "snapshot_id": str(snapshot.id),
-        "items": [offer_payload(row) for row in rows],
-        "meta": {
-            "page": page.page,
-            "page_size": page.page_size,
-            "total": total,
-            "total_pages": (total + page.page_size - 1) // page.page_size,
-        },
-    }
+    return offer_service.paged_offers(
+        session,
+        snapshot,
+        page,
+        offer_type=offer_type,
+        source_code=source_code,
+        valid_only=valid_only,
+        exclude_outliers=exclude_outliers,
+    )
 
 
 @router.get("/{snapshot_id}/sources", summary="Итоги по источникам снимка")

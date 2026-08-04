@@ -5,22 +5,21 @@ import { Link } from 'react-router-dom';
 import { api } from '@/api/client';
 import type { RunBrief } from '@/api/types';
 import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, PriceRange, RunStatusTag,
+  AsyncBlock, LabelWithHint, PageTitle, PriceRange, RunStatusTag,
 } from '@/components/common';
+import { ExportButton } from '@/components/ExportButton';
 import { useAsync } from '@/hooks/useAsync';
-import { RUN_TYPE_LABEL, dateOnly, dateTime, labelOf, money, score } from '@/utils/format';
-import { MIN_MAX_HINT, P25_P75_HINT, QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
+import { RUN_TYPE_LABEL, dateOnly, dateTime, labelOf, money } from '@/utils/format';
+import { MIN_MAX_HINT, P25_P75_HINT } from '@/utils/hints';
 
 const { Text } = Typography;
 
 export default function RunsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [status, setStatus] = useState<string>();
-  const [runType, setRunType] = useState<string>();
-  const [confidence, setConfidence] = useState<string>();
   const [origin, setOrigin] = useState<string>();
   const [destination, setDestination] = useState<string>();
+
   const cities = useAsync(() => api.cities(), []);
   // Список показывает все расчеты: отбор по полноте и по синтетике убран,
   // на текущем объеме данных он только сужал и без того небольшую выдачу.
@@ -28,14 +27,11 @@ export default function RunsPage() {
     () => ({
       page,
       page_size: pageSize,
-      status,
-      run_type: runType,
-      confidence_level: confidence,
       origin,
       destination,
       include_synthetic: true,
     }),
-    [page, pageSize, status, runType, confidence, origin, destination],
+    [page, pageSize, origin, destination],
   );
 
   const runs = useAsync(() => api.runs(query), [JSON.stringify(query)]);
@@ -46,38 +42,20 @@ export default function RunsPage() {
       <PageTitle
         title="Расчеты"
         subtitle="Неизменяемый исторический результат применения методики к снимку рынка"
+        extra={
+          <ExportButton
+            dataset="SCENARIO_RUNS"
+            filters={{ origin, destination, include_synthetic: true }}
+            label="Выгрузить расчеты"
+          />
+        }
       />
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
-          <Select allowClear placeholder="Статус" style={{ width: 170 }}
-            options={[
-              { value: 'SUCCESS', label: 'Успешно' },
-              { value: 'PARTIAL_SUCCESS', label: 'Частично' },
-              { value: 'FAILED', label: 'Ошибка' },
-              { value: 'UNSUPPORTED', label: 'Не поддерживается' },
-              { value: 'NO_DATA', label: 'Нет данных' },
-            ]}
-            value={status} onChange={(v) => { setStatus(v); setPage(1); }} />
-          <Select allowClear placeholder="Тип запуска" style={{ width: 150 }}
-            options={[
-              { value: 'MONITORING', label: 'Мониторинг' },
-              { value: 'ON_DEMAND', label: 'По запросу' },
-              { value: 'REPLAY', label: 'Пересчет' },
-              { value: 'MANUAL', label: 'Ручной' },
-            ]}
-            value={runType} onChange={(v) => { setRunType(v); setPage(1); }} />
-          <Select allowClear placeholder="Уверенность" style={{ width: 160 }}
-            options={[
-              { value: 'HIGH', label: 'Высокая' },
-              { value: 'MEDIUM', label: 'Средняя' },
-              { value: 'LOW', label: 'Низкая' },
-              { value: 'INSUFFICIENT', label: 'Недостаточно' },
-            ]}
-            value={confidence} onChange={(v) => { setConfidence(v); setPage(1); }} />
-          <Select allowClear placeholder="Откуда" style={{ width: 150 }} options={cityOptions}
+          <Select allowClear placeholder="Откуда" style={{ width: 180 }} options={cityOptions}
             value={origin} onChange={(v) => { setOrigin(v); setPage(1); }} />
-          <Select allowClear placeholder="Куда" style={{ width: 150 }} options={cityOptions}
+          <Select allowClear placeholder="Куда" style={{ width: 180 }} options={cityOptions}
             value={destination} onChange={(v) => { setDestination(v); setPage(1); }} />
         </Space>
       </Card>
@@ -162,17 +140,6 @@ export default function RunsPage() {
                 dataIndex: 'price_per_person',
                 align: 'right',
                 render: (value: number | null) => money(value),
-              },
-              {
-                title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
-                dataIndex: 'quality_score',
-                align: 'right',
-                render: (value: number | null) => score(value),
-              },
-              {
-                title: 'Уверенность',
-                dataIndex: 'confidence_level',
-                render: (value: any) => <ConfidenceTag level={value} />,
               },
               {
                 title: 'Горизонт',

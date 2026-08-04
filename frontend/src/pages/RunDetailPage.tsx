@@ -1,21 +1,18 @@
-import { Alert, Card, Col, Descriptions, Progress, Row, Space, Table, Tabs, Tag, Typography } from 'antd';
-import ReactECharts from 'echarts-for-react';
-import { useMemo } from 'react';
+import { Card, Col, Descriptions, Row, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { Link, useParams } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import type { SourceBreakdownRow } from '@/api/types';
-import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag,
-} from '@/components/common';
+import { AsyncBlock, MetricDisclaimer, PageTitle } from '@/components/common';
+import { OffersTable } from '@/components/OffersTable';
+import { RailComparisonTable } from '@/components/RailComparisonTable';
 import { useAsync } from '@/hooks/useAsync';
 import {
-  COMPONENT_LABEL, COMPONENT_STATUS_LABEL, CONFIDENCE_LABEL, FILTER_REASON_LABEL,
-  QUALITY_FACTOR_LABEL, dateTime, labelOf, money, num, percent, score,
+  COMPONENT_LABEL, COMPONENT_STATUS_LABEL, FILTER_REASON_LABEL,
+  dateTime, labelOf, money, num, percent,
 } from '@/utils/format';
-import { QUALITY_SCORE_HINT } from '@/utils/hints';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 export default function RunDetailPage() {
   const { id = '' } = useParams();
@@ -24,31 +21,7 @@ export default function RunDetailPage() {
   const breakdown = useAsync(() => api.runSourceBreakdown(id), [id]);
 
   const data = run.data;
-  const factors: Record<string, number> = data?.quality.breakdown?.factor_scores ?? {};
-  const weights: Record<string, number> = data?.quality.breakdown?.weights ?? {};
-
-  const qualityOption = useMemo(
-    () => ({
-      tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}: ${(p.value * 100).toFixed(0)} %` },
-      radar: {
-        indicator: Object.keys(factors).map((key) => ({
-          name: labelOf(QUALITY_FACTOR_LABEL, key),
-          max: 1,
-        })),
-        radius: '65%',
-      },
-      series: [
-        {
-          type: 'radar',
-          data: [{ value: Object.values(factors), name: 'Факторы качества', areaStyle: { opacity: 0.25 } }],
-        },
-      ],
-    }),
-    [JSON.stringify(factors)],
-  );
-
   const rows: SourceBreakdownRow[] = (breakdown.data?.rows as SourceBreakdownRow[]) ?? [];
-  const insufficient = data?.confidence_level === 'INSUFFICIENT';
 
   return (
     <>
@@ -65,53 +38,36 @@ export default function RunDetailPage() {
       <AsyncBlock loading={run.loading} error={run.error}>
         <MetricDisclaimer text={data?.disclaimer} />
 
+        {/*
+          В шапке остаются только предупреждения, меняющие трактовку цифры.
+          Версии профиля, движка и нормализации — техническая метаинформация;
+          она есть во вкладке «Объяснение» и не нужна на первом экране.
+        */}
         <Space wrap style={{ marginBottom: 16 }}>
-          {data ? <RunStatusTag status={data.status} /> : null}
-          <ConfidenceTag level={data?.confidence_level ?? null} reason={data?.confidence.reason} />
           {data?.served_from_cache ? <Tag color="blue">из кэша</Tag> : null}
           {(data?.component_statuses ?? []).map((status) => (
             <Tag key={status} color="warning">
               {labelOf(COMPONENT_STATUS_LABEL, status)}
             </Tag>
           ))}
-          <Tag>
-            профиль {data?.profile.code}@{data?.profile.version}
-          </Tag>
-          <Tag>движок {data?.versions.engine}</Tag>
-          <Tag>нормализация {data?.versions.normalization}</Tag>
         </Space>
 
-        {insufficient ? (
-          <Alert
-            type="error"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message={`Уровень уверенности: ${CONFIDENCE_LABEL.INSUFFICIENT.toLowerCase()}`}
-            description={
-              data?.confidence.reason ??
-              'Итог не может быть представлен как полноценная расчетная стоимость.'
-            }
-          />
-        ) : null}
-
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col xs={24} lg={14}>
+          <Col xs={24}>
             <Card size="small" title="Стоимость">
-              {!insufficient ? (
-                <div style={{ marginBottom: 16 }}>
-                  <Text type="secondary">Расчетная типовая стоимость путешествия</Text>
-                  <div style={{ fontSize: 32, fontWeight: 600 }}>
-                    {money(data?.total_estimated_cost)}
-                  </div>
-                  <Text type="secondary">
-                    P25–P75 {money(data?.total.p25)} — {money(data?.total.p75)}
-                    {data?.total.min != null && data?.total.max != null ? (
-                      <> · размах {money(data.total.min)} — {money(data.total.max)}</>
-                    ) : null}
-                    {' '}· на человека {money(data?.price_per_person)}
-                  </Text>
+              <div style={{ marginBottom: 16 }}>
+                <Text type="secondary">Расчетная типовая стоимость путешествия</Text>
+                <div style={{ fontSize: 32, fontWeight: 600 }}>
+                  {money(data?.total_estimated_cost)}
                 </div>
-              ) : null}
+                <Text type="secondary">
+                  P25–P75 {money(data?.total.p25)} — {money(data?.total.p75)}
+                  {data?.total.min != null && data?.total.max != null ? (
+                    <> · размах {money(data.total.min)} — {money(data.total.max)}</>
+                  ) : null}
+                  {' '}· на человека {money(data?.price_per_person)}
+                </Text>
+              </div>
 
               <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
                 <Descriptions.Item label="Транспорт">
@@ -179,48 +135,21 @@ export default function RunDetailPage() {
               </Descriptions>
             </Card>
           </Col>
-
-          <Col xs={24} lg={10}>
-            <Card
-              size="small"
-              title={
-                <LabelWithHint
-                  text={`Оценка качества: ${score(data?.quality_score)}`}
-                  hint={QUALITY_SCORE_HINT}
-                />
-              }
-            >
-              {Object.keys(factors).length ? (
-                <ReactECharts option={qualityOption} style={{ height: 240 }} notMerge />
-              ) : null}
-              <div style={{ marginTop: 8 }}>
-                {Object.entries(factors).map(([key, value]) => (
-                  <div key={key} style={{ marginBottom: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                      <span>{labelOf(QUALITY_FACTOR_LABEL, key)}</span>
-                      <span>
-                        {(value * 100).toFixed(0)} %
-                        {weights[key] ? (
-                          <Text type="secondary"> · вес {(weights[key] * 100).toFixed(0)} %</Text>
-                        ) : null}
-                      </span>
-                    </div>
-                    <Progress
-                      percent={Math.round(value * 100)}
-                      size="small"
-                      showInfo={false}
-                      strokeColor={value >= 0.8 ? '#52c41a' : value >= 0.5 ? '#faad14' : '#ff4d4f'}
-                    />
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </Col>
         </Row>
 
         <Card size="small">
           <Tabs
             items={[
+              {
+                key: 'offers',
+                label: 'Предложения',
+                children: <OffersTable runId={id} />,
+              },
+              {
+                key: 'rail',
+                label: 'Сравнение источников (ЖД)',
+                children: <RailComparisonTable runId={id} />,
+              },
               {
                 key: 'sources',
                 label: 'Источники',
@@ -310,22 +239,6 @@ export default function RunDetailPage() {
                 ),
               },
               {
-                key: 'confidence',
-                label: 'Уверенность',
-                children: (
-                  <div>
-                    <Paragraph>
-                      <ConfidenceTag
-                        level={data?.confidence_level ?? null}
-                        reason={data?.confidence.reason}
-                      />{' '}
-                      {data?.confidence.reason}
-                    </Paragraph>
-                    <FactorLists factors={data?.confidence.factors ?? {}} />
-                  </div>
-                ),
-              },
-              {
                 key: 'errors',
                 label: `Ошибки сбора (${(data?.error_summary ?? []).length})`,
                 children: (data?.error_summary ?? []).length ? (
@@ -341,42 +254,6 @@ export default function RunDetailPage() {
         </Card>
       </AsyncBlock>
     </>
-  );
-}
-
-function FactorLists({ factors }: { factors: Record<string, any> }) {
-  const positive: string[] = factors.increased ?? factors.positive ?? [];
-  const negative: string[] = factors.decreased ?? factors.negative ?? [];
-
-  if (!positive.length && !negative.length) {
-    return (
-      <pre className="tco-monospace" style={{ whiteSpace: 'pre-wrap' }}>
-        {JSON.stringify(factors, null, 2)}
-      </pre>
-    );
-  }
-
-  return (
-    <Row gutter={16}>
-      <Col xs={24} md={12}>
-        <Card size="small" title="Повысили уверенность">
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {positive.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </Card>
-      </Col>
-      <Col xs={24} md={12}>
-        <Card size="small" title="Снизили уверенность">
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {negative.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </Card>
-      </Col>
-    </Row>
   );
 }
 

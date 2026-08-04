@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from tco.api.deps import AnalystDep, SessionDep, SettingsDep, ViewerDep
+from tco.api.deps import SessionDep, SettingsDep, ViewerDep
 from tco.api.dispatch import dispatch
 from tco.api.routers.dashboard import FiltersDep
 from tco.api.serializers import export_artifact
@@ -58,10 +58,14 @@ def create_export(
     request: Request,
     session: SessionDep,
     settings: SettingsDep,
-    principal: AnalystDep,
+    principal: ViewerDep,
     filters: FiltersDep,
 ) -> dict[str, Any]:
-    """Ставит выгрузку в очередь и возвращает ``job_id``."""
+    """Ставит выгрузку в очередь и возвращает ``job_id``.
+
+    Доступно роли VIEWER: выгрузка своих же наблюдений — обычная работа
+    бизнес-пользователя. Подотчетность обеспечивает запись в аудит ниже.
+    """
     params = {
         "dataset": options.dataset.value,
         "format": options.export_format.value,

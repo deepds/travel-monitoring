@@ -5,9 +5,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
-import {
-  AsyncBlock, ConfidenceTag, LabelWithHint, PageTitle, RunStatusTag,
-} from '@/components/common';
+import { AsyncBlock, PageTitle, RunStatusTag } from '@/components/common';
 import { ScenarioDeleteModal } from '@/components/ScenarioDialogs';
 import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
 import { useAuth } from '@/auth/AuthContext';
@@ -15,9 +13,8 @@ import { useAsync } from '@/hooks/useAsync';
 import {
   ACCOMMODATION_LABEL, CANCELLATION_LABEL, FARE_TYPE_LABEL, MEAL_LABEL, RAIL_CLASS_LABEL,
   RUN_TYPE_LABEL, SCENARIO_TYPE_LABEL, TRANSPORT_LABEL, dateOnly, dateTime, labelOf, money,
-  score, starsLabel,
+  starsLabel,
 } from '@/utils/format';
-import { QUALITY_SCORE_SHORT_HINT } from '@/utils/hints';
 
 export default function ScenarioDetailPage() {
   const { id = '' } = useParams();
@@ -31,6 +28,15 @@ export default function ScenarioDetailPage() {
   const history = useAsync(() => api.scenarioHistory(id, { limit: 200 }), [id]);
 
   const points = history.data?.items ?? [];
+
+  /** История отсортирована от свежих к старым — крайние точки берутся с обоих концов. */
+  const observation = useMemo(() => {
+    if (!points.length) return 'Расчетов по этому сценарию еще не было';
+    const latest = points[0]?.observation_date as string | undefined;
+    const earliest = points[points.length - 1]?.observation_date as string | undefined;
+    const period = earliest === latest ? dateOnly(latest) : `с ${dateOnly(earliest)}`;
+    return `Наблюдается ${period}. Последний расчет — ${dateOnly(latest)}. Всего наблюдений: ${points.length}.`;
+  }, [points]);
 
   const chartOption = useMemo(
     () => ({
@@ -193,12 +199,13 @@ export default function ScenarioDetailPage() {
                   <Tag>{labelOf(SCENARIO_TYPE_LABEL, data?.scenario_type)}</Tag>
                   {data?.is_active ? <Tag color="success">активен</Tag> : <Tag>выключен</Tag>}
                 </Descriptions.Item>
-                <Descriptions.Item label="Период активности">
-                  {dateOnly(data?.active_from)} — {dateOnly(data?.active_until)}
-                </Descriptions.Item>
-                <Descriptions.Item label="Отпечаток">
-                  <span className="tco-monospace">{data?.fingerprint?.slice(0, 24)}…</span>
-                </Descriptions.Item>
+                {/*
+                  «Период активности» и «Отпечаток» убраны: первый почти всегда
+                  полупустой и дублирует даты поездки, второй — внутренний хеш.
+                  Вместо них — то, что человеку действительно нужно знать
+                  о наблюдении. Считается из уже загруженной истории.
+                */}
+                <Descriptions.Item label="Наблюдение">{observation}</Descriptions.Item>
               </Descriptions>
             </Card>
           </Col>
@@ -267,17 +274,6 @@ export default function ScenarioDetailPage() {
                   dataIndex: 'hotel_median',
                   align: 'right',
                   render: (value: number | null) => money(value),
-                },
-                {
-                  title: <LabelWithHint text="Качество" hint={QUALITY_SCORE_SHORT_HINT} />,
-                  dataIndex: 'quality_score',
-                  align: 'right',
-                  render: (value: number | null) => score(value),
-                },
-                {
-                  title: 'Уверенность',
-                  dataIndex: 'confidence_level',
-                  render: (value: any) => <ConfidenceTag level={value} />,
                 },
               ]}
             />

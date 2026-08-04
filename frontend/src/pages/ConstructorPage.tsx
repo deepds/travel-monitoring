@@ -10,14 +10,11 @@ import { Link } from 'react-router-dom';
 
 import { ApiError, api } from '@/api/client';
 import type { Job, Run } from '@/api/types';
-import {
-  ConfidenceTag, LabelWithHint, MetricDisclaimer, PageTitle, RunStatusTag,
-} from '@/components/common';
+import { MetricDisclaimer, PageTitle } from '@/components/common';
 import { useAsync, usePolling } from '@/hooks/useAsync';
 import {
-  COMPONENT_STATUS_LABEL, JOB_STATUS_COLOR, JOB_STATUS_LABEL, labelOf, money, num, percent, score,
+  COMPONENT_STATUS_LABEL, JOB_STATUS_COLOR, JOB_STATUS_LABEL, labelOf, money, num, percent,
 } from '@/utils/format';
-import { QUALITY_SCORE_HINT } from '@/utils/hints';
 
 const { Text, Paragraph } = Typography;
 const TERMINAL = ['SUCCESS', 'FAILED', 'PARTIAL', 'CANCELLED', 'TIMED_OUT'];
@@ -415,17 +412,14 @@ export default function ConstructorPage() {
 }
 
 function RunResult({ run }: { run: Run }) {
-  const insufficient = run.confidence_level === 'INSUFFICIENT';
-
   return (
     <Card
       size="small"
       title="Результат расчета"
       extra={<Link to={`/runs/${run.id}`}>Подробный разбор →</Link>}
     >
+      {/* Набор меток совпадает с «Разбором расчета», чтобы экраны не разъезжались. */}
       <Space wrap style={{ marginBottom: 12 }}>
-        <RunStatusTag status={run.status} />
-        <ConfidenceTag level={run.confidence_level} reason={run.confidence.reason} />
         {run.served_from_cache ? <Tag color="blue">из кэша</Tag> : null}
         {run.component_statuses.map((status) => (
           <Tag key={status} color="warning">
@@ -434,38 +428,20 @@ function RunResult({ run }: { run: Run }) {
         ))}
       </Space>
 
-      {insufficient ? (
-        <Alert
-          type="error"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="Недостаточно данных для полноценной оценки"
-          description={
-            run.confidence.reason ??
-            'Итог не может быть показан как полноценная расчетная стоимость.'
-          }
-        />
-      ) : (
-        <div style={{ marginBottom: 16 }}>
-          <Text type="secondary">Расчетная типовая стоимость</Text>
-          <div style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.2 }}>
-            {money(run.total_estimated_cost)}
-          </div>
-          <Text type="secondary">
-            P25–P75: {money(run.total.p25)} — {money(run.total.p75)}
-            {run.total.min != null && run.total.max != null ? (
-              <> · размах {money(run.total.min)} — {money(run.total.max)}</>
-            ) : null}
-            {' '}· на человека {money(run.price_per_person)} · путешественников{' '}
-            {run.traveler_count}
-          </Text>
-          {run.confidence.reason ? (
-            <div style={{ marginTop: 6 }}>
-              <Text type="secondary">Причина: {run.confidence.reason}</Text>
-            </div>
-          ) : null}
+      <div style={{ marginBottom: 16 }}>
+        <Text type="secondary">Расчетная типовая стоимость</Text>
+        <div style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.2 }}>
+          {money(run.total_estimated_cost)}
         </div>
-      )}
+        <Text type="secondary">
+          P25–P75: {money(run.total.p25)} — {money(run.total.p75)}
+          {run.total.min != null && run.total.max != null ? (
+            <> · размах {money(run.total.min)} — {money(run.total.max)}</>
+          ) : null}
+          {' '}· на человека {money(run.price_per_person)} · путешественников{' '}
+          {run.traveler_count}
+        </Text>
+      </div>
 
       <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
         <Descriptions.Item label="Транспорт (медиана)">
@@ -490,11 +466,6 @@ function RunResult({ run }: { run: Run }) {
               : ''}
           </Text>
         </Descriptions.Item>
-        <Descriptions.Item
-          label={<LabelWithHint text="Оценка качества" hint={QUALITY_SCORE_HINT} />}
-        >
-          {score(run.quality_score)}
-        </Descriptions.Item>
         <Descriptions.Item label="Доля транспорта">
           {percent(run.total.transport_share)}
         </Descriptions.Item>
@@ -506,9 +477,6 @@ function RunResult({ run }: { run: Run }) {
           {run.sources.codes.map((code) => (
             <Tag key={code}>{code}</Tag>
           ))}
-        </Descriptions.Item>
-        <Descriptions.Item label="Профиль методики">
-          {run.profile.code}@{run.profile.version}
         </Descriptions.Item>
         <Descriptions.Item label="Снимок рынка">
           {run.market_snapshot_id ? (

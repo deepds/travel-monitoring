@@ -195,6 +195,97 @@ class TestSnapshot:
         assert after["accommodation_offer_count"] == before["accommodation_offer_count"]
 
 
+class TestRunOffers:
+    """Предложения, доступные из разбора расчета (вкладки интерфейса)."""
+
+    def test_offers_expose_specialized_detail(self, client, analyst_headers, calculated):
+        """Без ``detail`` интерфейс не покажет ни рейс, ни поезд, ни отель."""
+        body = client.get(
+            f"/api/v1/scenario-runs/{calculated['id']}/offers", headers=analyst_headers
+        ).json()
+        assert body["offers_available"] is True
+        assert body["meta"]["total"] > 0
+
+        by_type = {item["offer_type"]: item for item in body["items"]}
+        assert by_type, "расчет не вернул ни одного предложения"
+
+        for offer_type, item in by_type.items():
+            assert item["detail"] is not None, f"{offer_type} без специализированных полей"
+
+        if "FLIGHT" in by_type:
+            assert "flight_numbers" in by_type["FLIGHT"]["detail"]
+        if "RAIL" in by_type:
+            detail = by_type["RAIL"]["detail"]
+            assert "outbound_train_number" in detail
+            assert "car_type" in detail
+        if "ACCOMMODATION" in by_type:
+            assert "property_name" in by_type["ACCOMMODATION"]["detail"]
+
+    def test_offers_filter_by_source(self, client, analyst_headers, calculated):
+        full = client.get(
+            f"/api/v1/scenario-runs/{calculated['id']}/offers?page_size=200",
+            headers=analyst_headers,
+        ).json()
+        codes = {item["source_code"] for item in full["items"]}
+        assert codes
+
+        code = sorted(codes)[0]
+        filtered = client.get(
+            f"/api/v1/scenario-runs/{calculated['id']}/offers?source_code={code}",
+            headers=analyst_headers,
+        ).json()
+        assert {item["source_code"] for item in filtered["items"]} == {code}
+
+    def test_missing_offers_are_explained_not_an_error(
+        self, client, analyst_headers, calculated
+    ):
+        """Истекший срок хранения — объяснимое состояние, а не сбой запроса.
+
+        Снимок отдает на это 409; разбор расчета обязан деградировать мягко,
+        иначе интерфейс покажет красную ошибку вместо пояснения.
+        """
+        from tco.core.utils import utcnow
+        from tco.db.models.snapshot import MarketSnapshot
+        from tco.db.session import session_scope
+
+        run_id = calculated["id"]
+        snapshot_id = calculated["market_snapshot_id"]
+
+        def set_purged(value) -> None:
+            with session_scope() as db:
+                db.get(MarketSnapshot, snapshot_id).offers_purged_at = value
+
+        set_purged(utcnow())
+        try:
+            for suffix in ("offers", "rail-comparison"):
+                response = client.get(
+                    f"/api/v1/scenario-runs/{run_id}/{suffix}", headers=analyst_headers
+                )
+                assert response.status_code == 200, response.text
+                body = response.json()
+                assert body["offers_available"] is False
+                assert body["reason"] == "PURGED"
+                assert body["items"] == []
+                assert body["groups"] == []
+        finally:
+            set_purged(None)
+
+    def test_rail_comparison_returns_contract(self, client, analyst_headers, calculated):
+        body = client.get(
+            f"/api/v1/scenario-runs/{calculated['id']}/rail-comparison", headers=analyst_headers
+        ).json()
+        assert body["offers_available"] is True
+        assert isinstance(body["groups"], list)
+        summary = body["summary"]
+        assert summary["cross_source_group_count"] <= summary["group_count"]
+        assert (
+            summary["single_source_group_count"] + summary["cross_source_group_count"]
+            == summary["group_count"]
+        )
+        for group in body["groups"]:
+            assert group["source_count"] == len(group["prices"])
+
+
 class TestExplainability:
     def test_explain_lists_selection_and_quality(self, client, analyst_headers, calculated):
         body = client.get(
