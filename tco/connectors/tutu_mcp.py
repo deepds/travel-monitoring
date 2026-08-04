@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import date
 from typing import Any
@@ -498,95 +499,88 @@ class TutuMcpConnector(BaseConnector):
         *,
         round_trip: bool,
     ) -> list[Any]:
+        """Разбирает выдачу поиска транспорта.
+
+        Фактический контракт проверен на живом сервисе и отличается от
+        публичного описания: цена лежит в ``price.amount``, плечи — в ``legs``
+        с меткой ``outbound``/``inbound``, а пункты отправления и прибытия
+        приходят строками вида «Москва — Внуково (VKO)», а не объектами.
+
+        Каждый тарифный вариант (``variants``) становится отдельным
+        предложением: у вариантов разные цена и условия по багажу, и
+        схлопывание их в один объект потеряло бы именно ту информацию, по
+        которой методика различает авиатарифы.
+        """
         offers: list[Any] = []
         for item in _extract_offer_list(payload):
             offer = _unwrap_offer(item)
-            legs = offer.get("legs")
-            legs = [leg for leg in legs if isinstance(leg, dict)] if isinstance(legs, list) else []
-            outbound = _segments(legs[0]) if legs else []
-            inbound = _segments(legs[1]) if len(legs) > 1 else []
-
-            price = to_decimal(_get_path(offer, "best_offer", "price", "total"))
-            currency = _get_path(offer, "best_offer", "price", "currency", default="RUB")
+            outbound_raw, inbound_raw = _split_legs(offer)
+            outbound = [_segment_from_leg(seg) for seg in outbound_raw]
+            inbound = [_segment_from_leg(seg) for seg in inbound_raw]
+            base_price = to_decimal(_get_path(offer, "price", "amount"))
+            currency = str(_get_path(offer, "price", "currency", default="RUB") or "RUB")
+            offer_id = _first_str(offer, "offer_id", "id")
+            deeplink = _first_str(offer, "checkout_url", "search_results_url")
+            variants = [v for v in (offer.get("variants") or []) if isinstance(v, dict)]
 
             if offer_type == OfferType.FLIGHT:
-                offers.append(
-                    ProviderFlightOffer(
-                        source_offer_id=_first_str(offer, "id", "offer_id"),
-                        currency=str(currency or "RUB"),
-                        total_price=price,
-                        price_basis="ALL_PASSENGERS",
-                        deeplink=_first_str(offer, "search_results_url"),
-                        origin_code=_first_str(outbound[0].get("from") or {}, "iata_code", "code")
-                        if outbound
-                        else None,
-                        destination_code=_first_str(
-                            outbound[-1].get("to") or {}, "iata_code", "code"
+                for index, variant in enumerate(variants or [{}]):
+                    conditions = variant.get("conditions") or {}
+                    price = to_decimal(_get_path(variant, "price", "amount")) or base_price
+                    offers.append(
+                        ProviderFlightOffer(
+                            source_offer_id=f"{offer_id}:{index}" if variants else offer_id,
+                            currency=str(
+                                _get_path(variant, "price", "currency", default=currency)
+                                or currency
+                            ),
+                            total_price=price,
+                            price_basis="ALL_PASSENGERS",
+                            deeplink=deeplink,
+                            origin_code=outbound[0].origin_code if outbound else None,
+                            destination_code=outbound[-1].destination_code if outbound else None,
+                            origin_name=query.origin_city_name,
+                            destination_name=query.destination_city_name,
+                            outbound_segments=outbound,
+                            inbound_segments=inbound,
+                            outbound_duration_minutes=_leg_duration(outbound_raw),
+                            inbound_duration_minutes=_leg_duration(inbound_raw),
+                            cabin_class=_first_str(variant, "service_class")
+                            or _first_str(offer, "service_class"),
+                            fare_family=_first_str(conditions, "fare_family"),
+                            baggage_raw=_baggage_text(conditions),
+                            refund_raw=_refund_text(conditions),
+                            passenger_count=query.traveler_count,
+                            is_round_trip=bool(offer.get("is_round_trip")) and bool(inbound),
+                            source_payload={"transport": offer.get("transport")},
                         )
-                        if outbound
-                        else None,
-                        outbound_segments=[_build_segment(seg) for seg in outbound],
-                        inbound_segments=[_build_segment(seg) for seg in inbound],
-                        outbound_duration_minutes=_as_int(legs[0].get("duration")) if legs else None,
-                        inbound_duration_minutes=_as_int(legs[1].get("duration"))
-                        if len(legs) > 1
-                        else None,
-                        cabin_class=_first_str(offer.get("best_offer") or {}, "service_class"),
-                        fare_family=_get_path(offer, "best_offer", "price", "fare_family"),
-                        baggage_raw=_stringify(_get_path(offer, "best_offer", "price", "baggage")),
-                        refund_raw=_stringify(_get_path(offer, "best_offer", "price", "refund")),
-                        fare_conditions_raw=_stringify(
-                            _get_path(offer, "best_offer", "price", "fare_conditions")
-                        ),
-                        passenger_count=query.traveler_count,
-                        is_round_trip=round_trip and bool(inbound),
-                        source_payload={"status": offer.get("status")},
                     )
-                )
             else:
                 offers.append(
                     ProviderRailOffer(
-                        source_offer_id=_first_str(offer, "id", "offer_id"),
-                        currency=str(currency or "RUB"),
-                        total_price=price,
-                        # Туту отдает стоимость билета; пересчет на пассажиров
-                        # выполняет нормализация.
+                        source_offer_id=offer_id,
+                        currency=currency,
+                        total_price=base_price,
                         price_basis="PER_PASSENGER",
-                        outbound_segments=[_build_segment(seg) for seg in outbound],
-                        inbound_segments=[_build_segment(seg) for seg in inbound],
-                        outbound_train_number=_first_str(outbound[0], "train_number", "voyage_no")
+                        price_per_place_outbound=base_price,
+                        outbound_segments=outbound,
+                        inbound_segments=inbound,
+                        outbound_train_number=outbound[0].vehicle_number if outbound else None,
+                        inbound_train_number=inbound[0].vehicle_number if inbound else None,
+                        origin_station_name=outbound[0].origin_name if outbound else None,
+                        destination_station_name=outbound[-1].destination_name
                         if outbound
                         else None,
-                        inbound_train_number=_first_str(inbound[0], "train_number", "voyage_no")
-                        if inbound
-                        else None,
-                        origin_station_name=_first_str(outbound[0].get("from") or {}, "name")
-                        if outbound
-                        else None,
-                        destination_station_name=_first_str(outbound[-1].get("to") or {}, "name")
-                        if outbound
-                        else None,
-                        origin_city_name=_first_str(outbound[0].get("from") or {}, "city_name")
-                        if outbound
-                        else None,
-                        destination_city_name=_first_str(outbound[-1].get("to") or {}, "city_name")
-                        if outbound
-                        else None,
-                        car_type_raw=_first_str(offer.get("best_offer") or {}, "car_type"),
-                        service_classes=[
-                            item
-                            for item in [_first_str(offer.get("best_offer") or {}, "service_class")]
-                            if item
-                        ],
-                        carriers=[
-                            seg.get("carrier_name")
-                            for seg in outbound
-                            if isinstance(seg.get("carrier_name"), str)
-                        ],
-                        price_per_place_outbound=price,
+                        origin_city_name=query.origin_city_name,
+                        destination_city_name=query.destination_city_name,
+                        outbound_duration_minutes=_leg_duration(outbound_raw),
+                        inbound_duration_minutes=_leg_duration(inbound_raw),
+                        carriers=[str(c) for c in (offer.get("carriers") or []) if c],
+                        car_type_raw=_rail_car_type(offer, variants),
+                        deeplink=deeplink,
                         passenger_count=query.traveler_count,
                         is_round_trip=round_trip and bool(inbound),
-                        source_payload={"status": offer.get("status")},
+                        source_payload={"transport": offer.get("transport")},
                     )
                 )
         return offers
@@ -689,44 +683,64 @@ class TutuMcpConnector(BaseConnector):
                 diagnostics={"tool": self.TOOL_HOTELS, "mapped_args": sorted(args)},
             )
 
-    def _parse_hotels(self, payload: Any, query: AccommodationQuery) -> list[ProviderAccommodationOffer]:
+    def _parse_hotels(
+        self, payload: Any, query: AccommodationQuery
+    ) -> list[ProviderAccommodationOffer]:
+        """Разбирает выдачу поиска отелей.
+
+        Фактический контракт: объекты лежат в корневом ``hotels``, период
+        размещения — в ``stay``, цена и условия — в ``best_offer`` с явным
+        признаком базы цены ``price_basis``.
+        """
+        if not isinstance(payload, dict):
+            return []
+        stay = payload.get("stay") if isinstance(payload.get("stay"), dict) else {}
+        nights = _as_int(stay.get("nights")) or query.nights or 1
+        check_in = parse_date(stay.get("check_in")) or query.check_in
+        check_out = parse_date(stay.get("check_out")) or query.check_out
+
         offers: list[ProviderAccommodationOffer] = []
-        for item in _extract_offer_list(payload):
-            offer = _unwrap_offer(item)
-            hotel = offer.get("hotel") if isinstance(offer.get("hotel"), dict) else {}
-            best = offer.get("best_offer") if isinstance(offer.get("best_offer"), dict) else {}
-            price = to_decimal(_get_path(best, "price", "total"))
-            stars_raw = hotel.get("stars")
-            stars = _as_int(stars_raw)
+        for hotel in _extract_offer_list(payload):
+            best = hotel.get("best_offer") if isinstance(hotel.get("best_offer"), dict) else {}
+            price = to_decimal(_get_path(best, "price", "amount"))
+            if price is None:
+                continue
+            # ``stay_total`` — цена за весь период, что и требует методика.
+            basis = str(best.get("price_basis") or "stay_total")
+            total = price if basis == "stay_total" else price * nights
+            location = hotel.get("location") if isinstance(hotel.get("location"), dict) else {}
+            stars = _as_int(hotel.get("stars"))
+
             offers.append(
                 ProviderAccommodationOffer(
-                    source_offer_id=_first_str(offer, "id", "offer_id"),
-                    property_source_id=_first_str(hotel, "geo_id", "id", "alias"),
+                    source_offer_id=_first_str(hotel, "tutu_offer_id", "hotel_id"),
+                    property_source_id=_first_str(hotel, "hotel_id", "hotel_geo_id", "alias"),
                     property_name=_first_str(hotel, "name"),
-                    accommodation_type_raw=_first_str(hotel, "type", "kind", "property_type"),
+                    accommodation_type_raw=_first_str(hotel, "type", "kind")
+                    or query.accommodation_type,
                     stars=stars if stars and 1 <= stars <= 5 else None,
-                    stars_unrated=stars_raw is not None and (stars == 0),
+                    stars_unrated=stars == 0,
                     address=_first_str(hotel, "address"),
-                    city_name=_first_str(hotel, "city_name") or query.city_name,
+                    city_name=_first_str(location, "city") or query.city_name,
+                    latitude=_as_float(location.get("lat")),
+                    longitude=_as_float(location.get("lng")),
                     currency=str(_get_path(best, "price", "currency", default="RUB") or "RUB"),
-                    total_price=price,
-                    price_per_night=to_decimal(_get_path(best, "price", "per_night")),
+                    total_price=total,
                     price_basis="PER_ROOM_TOTAL",
-                    check_in=parse_date(best.get("check_in")) or query.check_in,
-                    check_out=parse_date(best.get("check_out")) or query.check_out,
-                    nights=_as_int(best.get("nights")) or query.nights,
+                    price_per_night=(total / nights) if nights else None,
+                    check_in=check_in,
+                    check_out=check_out,
+                    nights=nights,
                     room_name=_first_str(best, "room_name"),
-                    max_guests=_as_int(best.get("max_guests")),
                     # Поиск выполнялся по составу гостей, поэтому выдача
-                    # вместимость подтверждает.
+                    # подтверждает вместимость.
                     capacity_confirmed_by_query=True,
-                    meal_raw=_first_str(best, "board_name", "meal", "board"),
-                    cancellation_raw=_first_str(best, "cancellation", "refund_type", "cancel_policy"),
-                    review_score=_as_float(best.get("review_score")),
-                    review_count=_as_int(best.get("review_count")),
-                    amenities=[str(a) for a in (best.get("amenities") or []) if a][:40],
-                    deeplink=_first_str(best, "checkout_url"),
-                    source_payload={"status": offer.get("status")},
+                    meal_raw=_meal_text(best),
+                    cancellation_raw=_cancellation_text(best),
+                    review_score=_as_float(hotel.get("rating")),
+                    review_count=_as_int(hotel.get("review_count")),
+                    deeplink=_first_str(best, "checkout_url") or _first_str(hotel, "checkout_url"),
+                    source_payload={"alias": hotel.get("alias")},
                 )
             )
         return offers
@@ -765,6 +779,149 @@ class TutuMcpConnector(BaseConnector):
 # --------------------------------------------------------------------------- #
 # Вспомогательные функции модуля
 # --------------------------------------------------------------------------- #
+
+
+#: «Москва — Внуково (VKO)» → («Москва — Внуково», «VKO»).
+_PLACE_CODE_RE = re.compile(r"^(?P<name>.+?)\s*\((?P<code>[^)]+)\)\s*$")
+
+
+def _split_place(value: Any) -> tuple[str | None, str | None]:
+    """Разбирает пункт маршрута.
+
+    Источник отдает его строкой, а не объектом: «Москва — Внуково (VKO)»
+    для авиа и «Москва — Ленинградский вокзал (2006004)» для ЖД.
+    """
+    if isinstance(value, dict):
+        return (
+            _first_str(value, "name", "title"),
+            _first_str(value, "iata_code", "code", "station_code"),
+        )
+    if not isinstance(value, str) or not value.strip():
+        return None, None
+    match = _PLACE_CODE_RE.match(value.strip())
+    if match:
+        return match.group("name").strip(), match.group("code").strip()
+    # «Сочи, AER» — код после запятой.
+    if "," in value:
+        head, _, tail = value.rpartition(",")
+        tail = tail.strip()
+        if 2 <= len(tail) <= 8 and tail.replace("-", "").isalnum():
+            return head.strip(), tail
+    return value.strip(), None
+
+
+def _split_legs(offer: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    """Делит сегменты на плечи «туда» и «обратно» по метке ``label``."""
+    legs = [leg for leg in (offer.get("legs") or []) if isinstance(leg, dict)]
+    outbound: list[dict] = []
+    inbound: list[dict] = []
+    for index, leg in enumerate(legs):
+        label = str(leg.get("label") or ("outbound" if index == 0 else "inbound")).lower()
+        segments = [s for s in (leg.get("segments") or []) if isinstance(s, dict)] or [leg]
+        (inbound if label.startswith("in") or label.startswith("back") else outbound).extend(
+            segments
+        )
+    return outbound, inbound
+
+
+def _segment_from_leg(raw: dict[str, Any]) -> ProviderSegment:
+    origin_name, origin_code = _split_place(raw.get("from"))
+    destination_name, destination_code = _split_place(raw.get("to"))
+    return ProviderSegment(
+        origin_code=origin_code,
+        origin_name=origin_name,
+        destination_code=destination_code,
+        destination_name=destination_name,
+        departure_at=parse_datetime(raw.get("departure_at")),
+        arrival_at=parse_datetime(raw.get("arrival_at")),
+        duration_minutes=_as_int(raw.get("duration_min") or raw.get("duration")),
+        carrier_name=_first_str(raw, "carrier", "carrier_name", "airline_name"),
+        carrier_code=_first_str(raw, "carrier_code", "airline_code"),
+        vehicle_number=_first_str(raw, "voyage_no", "flight_no", "train_number"),
+        vehicle_name=_first_str(raw, "train_name", "vehicle_name"),
+        aircraft=_first_str(raw, "aircraft"),
+    )
+
+
+def _leg_duration(segments: list[dict[str, Any]]) -> int | None:
+    values = [_as_int(s.get("duration_min") or s.get("duration")) for s in segments]
+    values = [v for v in values if v]
+    return sum(values) if values else None
+
+
+def _baggage_text(conditions: dict[str, Any]) -> str | None:
+    """Собирает описание багажа из структурированных условий тарифа.
+
+    Источник отдает багаж объектами ``{kg, pieces}`` — это надежнее строк,
+    поэтому классификация получает однозначный текст, а не догадку.
+    """
+    if not isinstance(conditions, dict):
+        return None
+    checked = conditions.get("baggage") if isinstance(conditions.get("baggage"), dict) else {}
+    cabin = (
+        conditions.get("cabin_baggage")
+        if isinstance(conditions.get("cabin_baggage"), dict)
+        else {}
+    )
+    checked_pieces = _as_int(checked.get("pieces")) or 0
+    checked_kg = _as_int(checked.get("kg")) or 0
+    cabin_pieces = _as_int(cabin.get("pieces")) or 0
+    cabin_kg = _as_int(cabin.get("kg")) or 0
+
+    if checked_pieces > 0 or checked_kg > 0:
+        return f"Багаж включен: {checked_pieces} место {checked_kg} кг"
+    if cabin_pieces > 0 or cabin_kg > 0:
+        return f"Без багажа, ручная кладь {cabin_kg} кг"
+    if checked or cabin:
+        # Объекты присутствуют, но пусты — багаж действительно не включен.
+        return "Без багажа"
+    return None
+
+
+def _refund_text(conditions: dict[str, Any]) -> str | None:
+    if not isinstance(conditions, dict) or "refundable" not in conditions:
+        return None
+    return "Возвратный" if conditions.get("refundable") else "Невозвратный"
+
+
+def _meal_text(best: dict[str, Any]) -> str | None:
+    name = _first_str(best, "meal_name", "board_name")
+    if name:
+        return name
+    included = best.get("breakfast_included")
+    if included is True:
+        return "Завтрак"
+    if included is False:
+        return "Без питания"
+    return None
+
+
+def _cancellation_text(best: dict[str, Any]) -> str | None:
+    free = best.get("free_cancellation")
+    if free is True:
+        return "Бесплатная отмена"
+    if free is False:
+        return "Невозвратный тариф"
+    for item in best.get("highlights") or []:
+        if isinstance(item, dict) and item.get("type") == "policies":
+            return _first_str(item, "text")
+    return None
+
+
+def _rail_car_type(offer: dict[str, Any], variants: list[dict[str, Any]]) -> str | None:
+    """Ищет тип вагона в предложении или его вариантах."""
+    for source in (offer, *(variants or [])):
+        if not isinstance(source, dict):
+            continue
+        value = _first_str(source, "car_type", "car_type_name", "coach_type")
+        if value:
+            return value
+        conditions = source.get("conditions")
+        if isinstance(conditions, dict):
+            value = _first_str(conditions, "car_type", "car_type_name")
+            if value:
+                return value
+    return None
 
 
 def _stringify(value: Any) -> str | None:
