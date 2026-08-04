@@ -196,6 +196,14 @@ def default_name(draft: ScenarioDraft, origin: City, destination: City) -> str:
     )
 
 
+def _code_taken(session: Session, code: str) -> bool:
+    """Код занят и мягко удаленным сценарием: ограничение уникальности общее."""
+    return (
+        session.scalars(select(TravelScenario).where(TravelScenario.code == code)).first()
+        is not None
+    )
+
+
 def create_scenario(
     session: Session,
     draft: ScenarioDraft,
@@ -232,9 +240,18 @@ def create_scenario(
             )
         return existing, False
 
+    # Мягко удаленный сценарий сохраняет свой код, поэтому повторное создание
+    # с теми же параметрами обязано подобрать свободный код. Суффикс выводится
+    # из отпечатка и сам по себе не уникален: без цикла третий цикл
+    # «создать — удалить — создать» нарушал бы uq_travel_scenarios_code.
     code = draft.code or default_code(draft, fingerprint)
-    if session.scalars(select(TravelScenario).where(TravelScenario.code == code)).first():
-        code = f"{code}-{fingerprint[6:10].upper()}"
+    if _code_taken(session, code):
+        base = f"{code}-{fingerprint[6:10].upper()}"
+        code = base
+        attempt = 2
+        while _code_taken(session, code):
+            code = f"{base}-{attempt}"
+            attempt += 1
 
     scenario = TravelScenario(
         code=code,

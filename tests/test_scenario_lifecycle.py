@@ -158,6 +158,26 @@ class TestFootprint:
 class TestDeletion:
     """Два режима удаления с разной судьбой накопленных данных."""
 
+    def test_same_scenario_can_be_recreated_repeatedly(
+        self, client, admin_headers, monitoring_payload
+    ):
+        """Мягко удаленный сценарий занимает свой код навсегда.
+
+        Код и запасной суффикс выводятся из отпечатка, поэтому без подбора
+        свободного кода третий цикл «создать — удалить» упирался в общее
+        ограничение уникальности и возвращал 500.
+        """
+        codes = []
+        for _ in range(3):
+            created = _create(client, admin_headers, monitoring_payload)
+            codes.append(created["code"])
+            response = client.delete(
+                f"/api/v1/scenarios/{created['id']}", headers=admin_headers
+            )
+            assert response.status_code in (200, 204), response.text
+
+        assert len(set(codes)) == len(codes), f"коды повторились: {codes}"
+
     def test_soft_delete_keeps_history(self, client, admin_headers, monitoring_payload, sandbox_profile):
         created = _create(client, admin_headers, monitoring_payload)
         client.post(
