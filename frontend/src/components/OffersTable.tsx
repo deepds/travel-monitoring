@@ -7,7 +7,7 @@
  * понять, почему цены различаются.
  */
 
-import { Empty, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Empty, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useState } from 'react';
 
@@ -238,9 +238,19 @@ const MIXED_COLUMNS: ColumnsType<Offer> = [
   },
 ];
 
-export function OffersTable({ runId }: { runId: string }) {
+export interface OffersTableProps {
+  runId: string;
+  /** Режим сборки поездки: у каждой строки появляется кнопка выбора. */
+  selectable?: boolean;
+  /** Идентификаторы уже выбранных предложений. */
+  selectedIds?: string[];
+  onSelect?: (offer: Offer) => void;
+}
+
+export function OffersTable({ runId, selectable, selectedIds, onSelect }: OffersTableProps) {
   const [kind, setKind] = useState<TypeFilter>('ALL');
   const [page, setPage] = useState(1);
+  const chosen = new Set(selectedIds ?? []);
 
   const offers = useAsync(
     () =>
@@ -253,8 +263,29 @@ export function OffersTable({ runId }: { runId: string }) {
   );
 
   const data = offers.data;
-  const columns =
-    kind === 'ALL' ? [...MIXED_COLUMNS, ...COMMON] : [...TYPE_COLUMNS[kind], ...COMMON];
+  const base = kind === 'ALL' ? [...MIXED_COLUMNS, ...COMMON] : [...TYPE_COLUMNS[kind], ...COMMON];
+  // Выбор сделан кнопкой, а не rowSelection: поездка состоит из одного
+  // транспорта и одного проживания, а это разные строки одной таблицы —
+  // ни одиночный, ни множественный выбор Ant Design такого не выражает.
+  const columns: ColumnsType<Offer> = selectable
+    ? [
+        ...base,
+        {
+          title: '',
+          key: 'pick',
+          fixed: 'right',
+          width: 110,
+          render: (_: unknown, row: Offer) =>
+            chosen.has(row.id) ? (
+              <Tag color="success">выбрано</Tag>
+            ) : (
+              <Button size="small" onClick={() => onSelect?.(row)}>
+                Выбрать
+              </Button>
+            ),
+        },
+      ]
+    : base;
 
   return (
     <AsyncBlock loading={offers.loading} error={offers.error}>
