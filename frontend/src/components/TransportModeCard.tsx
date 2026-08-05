@@ -77,7 +77,9 @@ export function TransportModeCard({ query }: { query?: Query }) {
       xAxis: {
         type: 'category',
         data: pairs.map((pair) => pair.route),
-        axisLabel: { interval: 0, rotate: pairs.length > 4 ? 20 : 0 },
+        // Названия направлений длинные, и при пологом наклоне соседние подписи
+        // наезжали друг на друга. 45° разводит их, не теряя ни одной.
+        axisLabel: { interval: 0, rotate: 45 },
       },
       yAxis: { type: 'value', axisLabel: { formatter: (value: number) => money(value) } },
       series: [
@@ -103,7 +105,7 @@ export function TransportModeCard({ query }: { query?: Query }) {
             </Text>
             <ReactECharts
               option={applyChartTheme(option, resolved)}
-              style={{ height: 260, marginTop: 8 }}
+              style={{ height: 320, marginTop: 8 }}
               notMerge
             />
 

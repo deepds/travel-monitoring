@@ -7,18 +7,18 @@
  * нее нужны недели наблюдений.
  */
 
-import { Alert, Card, Col, Empty, Row, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Card, Col, Empty, Row, Statistic, Table, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { useMemo } from 'react';
 
 import { api } from '@/api/client';
 import type { Premium, SourceGapRow, SpreadRow } from '@/api/types';
-import { AsyncBlock } from '@/components/common';
+import { AsyncBlock, RouteCell } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
 import { useTheme } from '@/theme/ThemeContext';
 import { applyChartTheme, chartTheme } from '@/utils/charts';
 import {
-  TRANSPORT_LABEL, dateOnly, money, num, signedPercent, sourceLabel,
+  dateAxis, dateOnly, money, num, signedPercent, sourceLabel,
 } from '@/utils/format';
 
 const { Text } = Typography;
@@ -59,11 +59,13 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
           ].join('<br/>');
         },
       },
-      grid: { left: 48, right: 16, top: 24, bottom: 56 },
+      // containLabel вместо фиксированного отступа снизу: повернутым датам
+      // нужно больше места, чем оставлял отступ, и подписи обрезались.
+      grid: { left: 8, right: 16, top: 24, bottom: 8, containLabel: true },
       xAxis: {
         type: 'category',
-        data: points.map((p) => dateOnly(p.departure_date)),
-        axisLabel: { rotate: points.length > 6 ? 30 : 0 },
+        data: points.map((p) => dateAxis(p.departure_date)),
+        axisLabel: { interval: 0, rotate: points.length > 6 ? 45 : 0 },
       },
       yAxis: {
         type: 'value',
@@ -103,7 +105,7 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
             </Text>
             <ReactECharts
               option={applyChartTheme(option, resolved)}
-              style={{ height: 260, marginTop: 8 }}
+              style={{ height: 300, marginTop: 8 }}
               notMerge
             />
             <Alert
@@ -274,16 +276,18 @@ export function SpreadCard({ query }: { query?: Query }) {
           rowKey={(row) => `${row.origin_city_code}-${row.destination_city_code}-${row.transport_type}`}
           dataSource={items}
           pagination={{ pageSize: 8, hideOnSinglePage: true }}
-          scroll={{ x: 700 }}
+          scroll={{ x: 900 }}
           columns={[
             {
               title: 'Направление',
               key: 'route',
+              width: 300,
               render: (_, row) => (
-                <span>
-                  {route(row)}{' '}
-                  <Tag>{TRANSPORT_LABEL[row.transport_type] ?? row.transport_type}</Tag>
-                </span>
+                <RouteCell
+                  origin={row.origin_city_name}
+                  destination={row.destination_city_name}
+                  transport={row.transport_type}
+                />
               ),
             },
             {

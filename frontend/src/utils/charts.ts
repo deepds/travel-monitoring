@@ -51,9 +51,15 @@ export function applyChartTheme(option: AnyOption, resolved: ResolvedTheme): Any
   const withAxis = (axis: AnyOption | AnyOption[] | undefined, category: boolean) => {
     if (!axis) return axis;
     const base = axisTheme(t, category);
-    return Array.isArray(axis)
-      ? axis.map((item) => ({ ...base, ...item }))
-      : { ...base, ...axis };
+    // axisLabel сливается по полям, а не заменяется целиком: график задает в нем
+    // поворот и формат, и при обычном перекрытии вместе с ними терялся цвет из
+    // темы — подписи оставались темными на темном фоне.
+    const merge = (item: AnyOption) => ({
+      ...base,
+      ...item,
+      axisLabel: { ...base.axisLabel, ...(item.axisLabel ?? {}) },
+    });
+    return Array.isArray(axis) ? axis.map(merge) : merge(axis);
   };
 
   return {

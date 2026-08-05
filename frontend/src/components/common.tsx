@@ -11,7 +11,7 @@ import type { ReactNode } from 'react';
 
 import type { ConfidenceLevel, RunStatus } from '@/api/types';
 import {
-  CONFIDENCE_COLOR, CONFIDENCE_LABEL, RUN_STATUS_COLOR, RUN_STATUS_LABEL,
+  CONFIDENCE_COLOR, CONFIDENCE_LABEL, RUN_STATUS_COLOR, RUN_STATUS_LABEL, TRANSPORT_LABEL,
   changeTone, money, signedPercent,
 } from '@/utils/format';
 
@@ -72,6 +72,32 @@ export function ConfidenceTag({ level, reason }: { level: ConfidenceLevel | null
 
 export function RunStatusTag({ status }: { status: RunStatus }) {
   return <Tag color={RUN_STATUS_COLOR[status]}>{RUN_STATUS_LABEL[status] ?? status}</Tag>;
+}
+
+/**
+ * Направление со способом проезда.
+ *
+ * Название города не разрывается посередине: перенос допускается только перед
+ * плашкой транспорта, и то лишь если места действительно не хватило. Так
+ * столбец остается ровным при любой длине названий.
+ */
+export function RouteCell({
+  origin,
+  destination,
+  transport,
+}: {
+  origin: string;
+  destination: string;
+  transport?: string | null;
+}) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ whiteSpace: 'nowrap' }}>
+        <b>{origin}</b> → <b>{destination}</b>
+      </span>
+      {transport ? <Tag>{TRANSPORT_LABEL[transport] ?? transport}</Tag> : null}
+    </span>
+  );
 }
 
 /**

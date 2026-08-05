@@ -38,6 +38,20 @@ export const dateOnly = (value: string | null | undefined): string => {
 };
 
 /**
+ * Дата с двузначным годом — для подписей осей.
+ *
+ * На горизонтальной оси десяток полных дат сливается в сплошную полосу, а год
+ * все же нужен: наблюдаемые даты вылета переходят через новый год.
+ */
+export const dateAxis = (value: string | null | undefined): string => {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
+};
+
+/**
  * Подпись значения из словаря.
  *
  * Незнакомое значение показывается как есть: интерфейс не должен молча прятать

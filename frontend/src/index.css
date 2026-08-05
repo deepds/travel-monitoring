@@ -90,63 +90,67 @@ h5.ant-typography {
 /*
  * Плашки статусов.
  *
- * Ant Design рисует их бледной подложкой с цветным текстом — на светлой теме
- * это давало около 2:1, и статус расчета читался хуже, чем соседний обычный
- * текст. Здесь заливка делается сплошной, а текст белым: цвет по-прежнему
- * кодирует смысл, но подпись читается при любом освещении.
+ * Заливка — тот же цвет, что и подпись, взятый полупрозрачно. Плашка получается
+ * тихой и не спорит с текстом вокруг, но подпись читается: у Ant Design бледная
+ * подложка с производным цветом текста давала около 2:1.
  *
- * Правило одно на весь интерфейс — плашки нигде не оформляются поштучно.
- * Исключение — .ant-tag-has-color: там цвет задан явно в коде и уже сплошной.
+ * Правило одно на весь интерфейс — плашки нигде не оформляются поштучно. Цвет
+ * задается один раз, через `--tag`: из него собираются и текст, и заливка,
+ * и рамка, поэтому смысловые правила ниже переопределяют только его.
+ *
+ * Исключение — .ant-tag-has-color: там цвет задан явно в коде.
  */
 .ant-tag:not(.ant-tag-has-color) {
-  background: var(--tco-tag-neutral);
-  border-color: transparent;
-  color: var(--tco-tag-fg);
+  --tag: var(--tco-tag-neutral);
+
+  background: rgb(var(--tag) / var(--tco-tag-fill));
+  border-color: rgb(var(--tag) / var(--tco-tag-edge));
+  color: rgb(var(--tag));
   font-weight: 500;
 }
 
 .ant-tag:not(.ant-tag-has-color) a,
 .ant-tag:not(.ant-tag-has-color) a:hover,
 .ant-tag:not(.ant-tag-has-color) .ant-tag-close-icon {
-  color: var(--tco-tag-fg);
+  color: rgb(var(--tag));
 }
 
 /* Селекторы намеренно на класс длиннее базового правила выше — иначе оно,
    идущее по тому же весу, перекрыло бы смысловые цвета. */
 .ant-tag.ant-tag-blue:not(.ant-tag-has-color),
 .ant-tag.ant-tag-geekblue:not(.ant-tag-has-color) {
-  background: var(--tco-tag-accent);
+  --tag: var(--tco-tag-accent);
 }
 
 .ant-tag.ant-tag-processing:not(.ant-tag-has-color),
 .ant-tag.ant-tag-cyan:not(.ant-tag-has-color) {
-  background: var(--tco-tag-info);
+  --tag: var(--tco-tag-info);
 }
 
 .ant-tag.ant-tag-success:not(.ant-tag-has-color),
 .ant-tag.ant-tag-green:not(.ant-tag-has-color),
 .ant-tag.ant-tag-lime:not(.ant-tag-has-color) {
-  background: var(--tco-tag-success);
+  --tag: var(--tco-tag-success);
 }
 
 .ant-tag.ant-tag-warning:not(.ant-tag-has-color),
 .ant-tag.ant-tag-gold:not(.ant-tag-has-color) {
-  background: var(--tco-tag-warning);
+  --tag: var(--tco-tag-warning);
 }
 
 .ant-tag.ant-tag-orange:not(.ant-tag-has-color),
 .ant-tag.ant-tag-volcano:not(.ant-tag-has-color) {
-  background: var(--tco-tag-warm);
+  --tag: var(--tco-tag-warm);
 }
 
 .ant-tag.ant-tag-error:not(.ant-tag-has-color),
 .ant-tag.ant-tag-red:not(.ant-tag-has-color),
 .ant-tag.ant-tag-magenta:not(.ant-tag-has-color) {
-  background: var(--tco-tag-error);
+  --tag: var(--tco-tag-error);
 }
 
 .ant-tag.ant-tag-purple:not(.ant-tag-has-color) {
-  background: var(--tco-tag-purple);
+  --tag: var(--tco-tag-purple);
 }
 
 .ant-layout-header {

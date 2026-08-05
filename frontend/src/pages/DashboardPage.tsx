@@ -1,4 +1,4 @@
-import { Card, Col, Row, Segmented, Table, Tag, Typography } from 'antd';
+import { Card, Col, Row, Segmented, Table, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { useMemo, useState } from 'react';
 
@@ -6,6 +6,7 @@ import { api } from '@/api/client';
 import type { DirectionRow } from '@/api/types';
 import {
   AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle, PriceRange,
+  RouteCell,
 } from '@/components/common';
 import { TOTAL_COLOR, applyChartTheme } from '@/utils/charts';
 import { useTheme } from '@/theme/ThemeContext';
@@ -16,7 +17,7 @@ import {
 } from '@/components/InsightCards';
 import { TransportModeCard } from '@/components/TransportModeCard';
 import { useAsync } from '@/hooks/useAsync';
-import { dateOnly, dateTime, money, num, percent, TRANSPORT_LABEL } from '@/utils/format';
+import { dateOnly, dateTime, money, num, percent } from '@/utils/format';
 import { MIN_MAX_HINT, P25_P75_HINT } from '@/utils/hints';
 
 const { Text, Title } = Typography;
@@ -120,11 +121,14 @@ export default function DashboardPage() {
       title: 'Направление',
       key: 'route',
       fixed: 'left' as const,
+      // Без явной ширины столбец сжимался до переноса посреди названия города.
+      width: 320,
       render: (_: unknown, row: DirectionRow) => (
-        <span>
-          <b>{row.origin_city_name as string}</b> → <b>{row.destination_city_name as string}</b>{' '}
-          <Tag>{TRANSPORT_LABEL[row.transport_type as string] ?? (row.transport_type as string)}</Tag>
-        </span>
+        <RouteCell
+          origin={row.origin_city_name as string}
+          destination={row.destination_city_name as string}
+          transport={row.transport_type as string}
+        />
       ),
     },
     {
@@ -316,7 +320,7 @@ export default function DashboardPage() {
             dataSource={directions.data?.items ?? []}
             columns={directionColumns}
             pagination={{ pageSize: 20, hideOnSinglePage: true }}
-            scroll={{ x: 1100 }}
+            scroll={{ x: 1400 }}
           />
         </AsyncBlock>
       </Card>
