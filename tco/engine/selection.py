@@ -3,8 +3,9 @@
 Порядок шагов зафиксирован методикой (SCOPE-R P §1):
 
     Validate and Classify → Filter by Calculation Profile →
-    Technical Deduplication → Cross-source Equivalence Linking →
-    Outlier Marking → Source Eligibility Check
+    Technical Deduplication → Fare Variant Collapsing →
+    Cross-source Equivalence Linking → Outlier Marking →
+    Source Eligibility Check
 
 Ни один шаг не удаляет данные физически: предложения остаются в снимке,
 меняется только ``exclusion_reason``. Это обязательное условие аудита
@@ -43,6 +44,11 @@ from tco.normalization.classify import (
 from tco.schemas.profile import ProfileRules
 
 
+#: Обозначения эконом-класса у источников. Все остальное — бизнес, комфорт и
+#: первый класс — сценариями не наблюдается.
+ECONOMY_CABINS = frozenset({"ECONOMIC", "ECONOMY", "ЭКОНОМ"})
+
+
 @dataclass(slots=True)
 class ScenarioFilterSpec:
     """Параметры сценария, по которым фильтруются предложения.
@@ -69,6 +75,7 @@ class SelectionStats:
     invalid: int = 0
     filtered_out: int = 0
     duplicates: int = 0
+    fare_variants: int = 0
     outliers: int = 0
     eligible: int = 0
     equivalence_groups: int = 0
@@ -80,6 +87,7 @@ class SelectionStats:
             "invalid": self.invalid,
             "filtered_out": self.filtered_out,
             "duplicates": self.duplicates,
+            "fare_variants": self.fare_variants,
             "outliers": self.outliers,
             "eligible": self.eligible,
             "equivalence_groups": self.equivalence_groups,
@@ -146,6 +154,14 @@ def profile_filter_reason(
         flight = offer.flight
         if flight is None:
             return "MISSING_FLIGHT_DETAIL"
+        # Все тарифные режимы сценария (CHEAPEST, CABIN_BAGGAGE,
+        # CHECKED_BAGGAGE) описывают эконом-класс: бизнес-тарифом ни один из
+        # них не удовлетворяется. Без этой проверки бизнес попадал в выборку
+        # наравне с экономом и поднимал медиану — на живых данных бизнес
+        # составлял треть зачтенных предложений. Неизвестный класс не
+        # отбраковывается: часть источников его не сообщает.
+        if flight.cabin_class and flight.cabin_class.upper() not in ECONOMY_CABINS:
+            return "CABIN_CLASS_MISMATCH"
         fare_type = spec.flight_fare_type or "CHEAPEST"
         baggage = BaggageType(flight.baggage_type)
         if filters.strict_baggage_classification and not baggage_satisfies(baggage, fare_type):
@@ -248,6 +264,63 @@ def deduplicate(offers: Sequence[Offer], stats: SelectionStats) -> None:
             stats.duplicates += 1
         else:
             seen[key] = offer
+
+
+def _itinerary_key(flight) -> tuple:  # noqa: ANN001
+    """Идентичность рейса без тарифа: те же борта в те же времена.
+
+    Номера рейсов вместе с временами вылета различают рейс надежнее, чем
+    номера сами по себе: один и тот же номер выполняется ежедневно.
+    """
+    numbers = tuple(str(number) for number in (flight.flight_numbers or []))
+    carriers = tuple(str(carrier) for carrier in (flight.marketing_carriers or []))
+    return (
+        numbers or carriers,
+        str(flight.outbound_departure_at),
+        str(flight.inbound_departure_at),
+    )
+
+
+def collapse_fare_variants(offers: Sequence[Offer], stats: SelectionStats) -> None:
+    """Из тарифных вариантов одного рейса в расчет идет один — самый дешевый.
+
+    Источник отдает на рейс несколько тарифов: «Эконом Базовый», «Оптимум»,
+    «Максимум» и так далее. Это не дубликаты — у них разные условия, и на
+    анализе надбавок они нужны все. Но в стоимости поездки рейс должен
+    участвовать один раз: иначе медиана измеряет структуру тарифной сетки, а
+    не цену, которую платит покупатель. На живых данных рейсы считались по
+    4–6 раз, и медиана оказывалась выше реальной цены поездки в полтора раза.
+
+    Схлопывание идет внутри источника: одинаковый рейс у разных источников —
+    это межисточниковое сравнение, им занимается группировка эквивалентности.
+
+    Какой тариф останется, определяет фильтр профиля выше: сюда доходят
+    только варианты, удовлетворяющие тарифному режиму сценария, и из них
+    выбирается самый дешевый.
+    """
+    groups: dict[tuple, list[Offer]] = defaultdict(list)
+    for offer in offers:
+        if offer.exclusion_reason != ExclusionReason.NONE.value:
+            continue
+        if offer.offer_type != OfferType.FLIGHT.value:
+            continue
+        flight = offer.flight
+        if flight is None:
+            continue
+        groups[(offer.source_code, _itinerary_key(flight))].append(offer)
+
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda item: (to_decimal(item.total_price) or Decimal("Infinity")))
+        keeper = group[0]
+        for offer in group[1:]:
+            offer.exclusion_reason = ExclusionReason.FARE_VARIANT.value
+            offer.exclusion_detail = (
+                f"Более дорогой тариф того же рейса; в расчет взят "
+                f"{keeper.flight.fare_family or '—'} за {keeper.total_price}"
+            )[:512]
+            stats.fare_variants += 1
 
 
 def link_equivalence_groups(offers: Sequence[Offer], stats: SelectionStats) -> dict[str, list[Offer]]:
@@ -388,6 +461,10 @@ def run_selection(
     stats = SelectionStats(total=len(offers))
     apply_profile_filter(offers, spec, rules, stats)
     deduplicate(offers, stats)
+    # После дедупликации и до выбросов: границы выброса считаются по той же
+    # выборке, что идет в расчет, иначе их задавали бы дорогие тарифы,
+    # которые в расчет все равно не попадут.
+    collapse_fare_variants(offers, stats)
     equivalence = link_equivalence_groups(
         [offer for offer in offers if offer.exclusion_reason == ExclusionReason.NONE.value], stats
     )

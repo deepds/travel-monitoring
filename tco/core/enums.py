@@ -234,6 +234,10 @@ class ExclusionReason(StrEnum):
     NONE = "NONE"
     INVALID = "INVALID"
     TECHNICAL_DUPLICATE = "TECHNICAL_DUPLICATE"
+    #: Более дорогой тарифный вариант того же рейса. Не дубликат: это отдельный
+    #: продукт со своими условиями, он нужен для анализа надбавок, но в цену
+    #: поездки один и тот же рейс должен входить один раз.
+    FARE_VARIANT = "FARE_VARIANT"
     PROFILE_FILTER = "PROFILE_FILTER"
     OUTLIER = "OUTLIER"
     SOURCE_NOT_ELIGIBLE = "SOURCE_NOT_ELIGIBLE"

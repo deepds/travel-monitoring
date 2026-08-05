@@ -457,7 +457,9 @@ class TutuMcpConnector(BaseConnector):
                     "origin",
                     query.origin_city_name,
                     query.origin_source_ids,
-                    _first_iata(query.origin_source_ids) if is_avia else None,
+                    _avia_place_code(query.origin_source_ids, query.origin_city_code)
+                    if is_avia
+                    else None,
                 ),
             )
             mapped_destination = self._set_arg(
@@ -470,7 +472,9 @@ class TutuMcpConnector(BaseConnector):
                     "destination",
                     query.destination_city_name,
                     query.destination_source_ids,
-                    _first_iata(query.destination_source_ids) if is_avia else None,
+                    _avia_place_code(query.destination_source_ids, query.destination_city_code)
+                    if is_avia
+                    else None,
                 ),
             )
             if not mapped_origin or not mapped_destination:
@@ -1173,11 +1177,27 @@ def _sum_prices(left: Any, right: Any) -> Any:
     return left_dec + right_dec
 
 
-def _first_iata(source_ids: dict[str, Any]) -> str | None:
+def _avia_place_code(source_ids: dict[str, Any], city_code: str) -> str | None:
+    """Код места для авиапоиска: город целиком, а не один из его аэропортов.
+
+    У городов с несколькими аэропортами брать первый из списка нельзя. Туту
+    понимает код аэропорта буквально и отбрасывает все рейсы в остальные: на
+    Москве (``SVO``, ``DME``, ``VKO``, ``ZIA``) это отсекало 76 % предложений
+    и всех перевозчиков, кроме Аэрофлота, — в ответе источника это видно как
+    ``post_filter_dropped_wrong_airport``. Наблюдаемый минимум оказывался
+    завышен на четверть: 67 046 ₽ вместо 53 332 ₽ на живой сверке с сайтом.
+
+    Код города каталога — метрополийный код IATA (``MOW``, ``LED``), источник
+    распознает его как город. Для городов с единственным аэропортом список из
+    одного кода однозначен, и он же используется.
+    """
     value = source_ids.get("iata")
-    if isinstance(value, list) and value:
-        return str(value[0])
-    return str(value) if value else None
+    codes = [str(item) for item in value] if isinstance(value, list) else ([str(value)] if value else [])
+    if len(codes) == 1:
+        return codes[0]
+    if len(codes) > 1:
+        return city_code or codes[0]
+    return city_code or None
 
 
 def _stars_numeric(stars: str) -> int | None:
