@@ -689,3 +689,63 @@ export interface AuditEvent {
   payload: Record<string, unknown>;
   created_at: string;
 }
+
+// --- Витрина вариантов отдыха ---
+
+export interface ShowcaseCities {
+  items: { code: string; name: string }[];
+  horizon_days: number;
+}
+
+export interface ShowcaseOption {
+  destination_code: string;
+  destination_name: string;
+  transport: number | null;
+  accommodation: number | null;
+  total: number | null;
+  /** Каких компонент не хватило: пустая строка иначе читается как бесплатная поездка. */
+  missing: string[];
+}
+
+export interface ShowcaseOptions {
+  origin_code: string;
+  origin_name: string;
+  departure_date: string;
+  return_date: string;
+  nights: number;
+  transport_type: string;
+  stars: string;
+  travelers: number;
+  items: ShowcaseOption[];
+  available: boolean;
+  grid_nights: number;
+  disclaimer: string;
+}
+
+export interface ShowcaseTransportCurve {
+  origin_code: string;
+  origin_name: string;
+  transport_type: string;
+  direction: string;
+  travelers: number;
+  horizon_days: number;
+  series: {
+    destination_code: string;
+    destination_name: string;
+    points: { departure_date: string; price: number }[];
+  }[];
+  disclaimer: string;
+}
+
+export interface ShowcaseAccommodationCurve {
+  stars: string;
+  nights: number;
+  travelers: number;
+  horizon_days: number;
+  series: {
+    city_code: string;
+    city_name: string;
+    points: { check_in: string; price: number }[];
+  }[];
+  disclaimer: string;
+}

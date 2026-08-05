@@ -11,6 +11,7 @@ import type {
   Job, JobEvent, Offer, Paged, Principal, Profile, RailComparison, RefOption, Run,
   RunBrief, RunOffersResponse, Scenario, ScenarioBrief, ScenarioFootprint, Snapshot,
   SnapshotBrief, SnapshotSourceRow, Source, SourceBreakdownRow, SourceConfidence,
+  ShowcaseAccommodationCurve, ShowcaseCities, ShowcaseOptions, ShowcaseTransportCurve,
   SourceOverviewRow, Template, TokenResponse, VersionInfo,
 } from './types';
 
@@ -183,6 +184,14 @@ export const api = {
     get<PriceComposition>('/dashboard/price-composition', query),
   spread: (query?: Query) => get<Spread>('/dashboard/spread', query),
   quality: (query?: Query) => get<Record<string, any>>('/dashboard/quality', query),
+
+  // --- Витрина вариантов отдыха ---
+  showcaseCities: () => get<ShowcaseCities>('/showcase/cities'),
+  showcaseOptions: (query: Query) => get<ShowcaseOptions>('/showcase/options', query),
+  showcaseTransportCurve: (query: Query) =>
+    get<ShowcaseTransportCurve>('/showcase/transport-curve', query),
+  showcaseAccommodationCurve: (query?: Query) =>
+    get<ShowcaseAccommodationCurve>('/showcase/accommodation-curve', query),
   kpi: (query?: Query) => get<Record<string, any>>('/dashboard/kpi', query),
   scenarioHistory: (id: string, query?: Query) =>
     get<{ items: Record<string, any>[]; total: number; scenario: Record<string, string> }>(

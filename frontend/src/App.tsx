@@ -1,6 +1,6 @@
 import {
   ApiOutlined, AreaChartOutlined, AuditOutlined, CalculatorOutlined,
-  CameraOutlined, DashboardOutlined, DatabaseOutlined, DownloadOutlined,
+  CameraOutlined, CompassOutlined, DashboardOutlined, DatabaseOutlined, DownloadOutlined,
   ExperimentOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons';
@@ -23,6 +23,7 @@ import RunDetailPage from '@/pages/RunDetailPage';
 import RunsPage from '@/pages/RunsPage';
 import ScenarioDetailPage from '@/pages/ScenarioDetailPage';
 import ScenariosPage from '@/pages/ScenariosPage';
+import ShowcasePage from '@/pages/ShowcasePage';
 import SnapshotDetailPage from '@/pages/SnapshotDetailPage';
 import SnapshotsPage from '@/pages/SnapshotsPage';
 import SourcesPage from '@/pages/SourcesPage';
@@ -47,6 +48,7 @@ interface NavItem {
  * Маршруты остаются доступны по прямой ссылке.
  */
 const NAV: NavItem[] = [
+  { key: '/showcase', icon: <CompassOutlined />, label: 'Куда поехать', minRole: 'VIEWER' },
   { key: '/dashboard', icon: <DashboardOutlined />, label: 'Дашборд', minRole: 'VIEWER' },
   { key: '/constructor', icon: <CalculatorOutlined />, label: 'Расчет сценария', minRole: 'ANALYST' },
   { key: '/scenarios', icon: <UnorderedListOutlined />, label: 'Сценарии', minRole: 'VIEWER' },
@@ -153,7 +155,8 @@ export default function App() {
             ) : null}
 
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/" element={<Navigate to="/showcase" replace />} />
+              <Route path="/showcase" element={<ShowcasePage />} />
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/constructor" element={<ConstructorPage />} />
               <Route path="/scenarios" element={<ScenariosPage />} />
