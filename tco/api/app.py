@@ -29,6 +29,7 @@ from tco.api.routers import (
     reference,
     runs,
     scenarios,
+    showcase,
     snapshots,
     sources,
     templates,
@@ -122,6 +123,7 @@ def create_app(settings: Any | None = None) -> FastAPI:
     app.include_router(snapshots.router, prefix=prefix)
     app.include_router(runs.router, prefix=prefix)
     app.include_router(dashboard.router, prefix=prefix)
+    app.include_router(showcase.router, prefix=prefix)
     app.include_router(sources.router, prefix=prefix)
     app.include_router(profiles.router, prefix=prefix)
     app.include_router(jobs.router, prefix=prefix)
