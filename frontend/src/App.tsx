@@ -97,7 +97,7 @@ export default function App() {
       <Sider breakpoint="lg" collapsedWidth="0" width={230} theme={resolved}>
         <div className="tco-brand">
           <div className="tco-brand-title">
-            <DatabaseOutlined /> Мониторинг
+            <DatabaseOutlined /> Мониторинг Туризм.рф
           </div>
           <div className="tco-brand-subtitle">стоимости путешествий</div>
         </div>
