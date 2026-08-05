@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Sequence
 
 from sqlalchemy import Select, and_, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer, lazyload
 
 from tco.core.enums import OfferType, RunStatus, RunType, TransportType, ValidityStatus
 from tco.core.utils import round_display, to_decimal, utcnow
@@ -97,6 +97,34 @@ def _apply_filters(stmt: Select, filters: DashboardFilters) -> Select:
     return stmt.where(and_(*conditions))
 
 
+#: Разделы расчета, которые дашборд не читает.
+#:
+#: Каждый из них — JSONB на несколько килобайт, и разбор весит больше, чем вся
+#: остальная строка. Столбцы отложены, а не исключены: обращение к ним
+#: продолжает работать, просто стоит отдельного запроса.
+_UNUSED_PAYLOAD = (
+    ScenarioRun.explainability_payload,
+    ScenarioRun.source_breakdown,
+    ScenarioRun.confidence_factors,
+    ScenarioRun.error_summary,
+)
+
+
+def _lean(stmt: Select, *, with_scenario: bool) -> Select:
+    """Выборка расчетов без данных, которые агрегатам не нужны.
+
+    ``ScenarioRun.scenario`` и ``ScenarioRun.profile`` объявлены
+    ``lazy="joined"`` ради экранов одного расчета: там присоединенные сценарий,
+    города и профиль нужны сразу. Агрегатам дашборда профиль не нужен никогда,
+    а сценарий — только там, где строки группируются по направлению.
+    """
+    options = [defer(column) for column in _UNUSED_PAYLOAD]
+    options.append(lazyload(ScenarioRun.profile))
+    if not with_scenario:
+        options.append(lazyload(ScenarioRun.scenario))
+    return stmt.options(*options)
+
+
 def latest_runs(
     session: Session,
     filters: DashboardFilters | None = None,
@@ -109,23 +137,32 @@ def latest_runs(
     При нескольких внутрисуточных снимках берется самый свежий.
     """
     filters = filters or DashboardFilters()
-    stmt = select(ScenarioRun)
-    if run_types:
-        stmt = stmt.where(ScenarioRun.run_type.in_([item.value for item in run_types]))
-    if as_of:
-        stmt = stmt.where(ScenarioRun.observation_date <= as_of)
-    stmt = _apply_filters(stmt, filters).order_by(
-        ScenarioRun.scenario_id, ScenarioRun.started_at.desc()
-    )
 
-    seen: set[Any] = set()
-    result: list[ScenarioRun] = []
-    for run in session.scalars(stmt).all():
-        if run.scenario_id in seen:
-            continue
-        seen.add(run.scenario_id)
-        result.append(run)
-    return result
+    # Отсев выполняет СУБД. Раньше выбирались все наблюдения каждого сценария —
+    # тысячи строк вместе с присоединенными сценарием, городами и профилем, —
+    # и лишние отбрасывались в Python уже после сборки объектов.
+    #
+    # Нумерация окном, а не ``DISTINCT ON``: последний существует только в
+    # PostgreSQL, а на остальных диалектах молча вырождается в обычный
+    # ``DISTINCT`` и вернул бы все наблюдения вместо последнего.
+    ranked = select(
+        ScenarioRun.id.label("id"),
+        func.row_number()
+        .over(partition_by=ScenarioRun.scenario_id, order_by=ScenarioRun.started_at.desc())
+        .label("position"),
+    )
+    if run_types:
+        ranked = ranked.where(ScenarioRun.run_type.in_([item.value for item in run_types]))
+    if as_of:
+        ranked = ranked.where(ScenarioRun.observation_date <= as_of)
+    latest = _apply_filters(ranked, filters).subquery()
+
+    stmt = (
+        select(ScenarioRun)
+        .where(ScenarioRun.id.in_(select(latest.c.id).where(latest.c.position == 1)))
+        .order_by(ScenarioRun.scenario_id)
+    )
+    return list(session.scalars(_lean(stmt, with_scenario=True)).all())
 
 
 def _extremum(values: Iterable[Any], *, smallest: bool) -> float | None:
@@ -742,7 +779,9 @@ def trends(
     since = utcnow().date() - timedelta(days=days)
     stmt = select(ScenarioRun).where(ScenarioRun.observation_date >= since)
     stmt = _apply_filters(stmt, filters).order_by(ScenarioRun.observation_date)
-    runs = session.scalars(stmt).all()
+    # Группировка идет по датам и суммам самого расчета — ни сценарий, ни
+    # профиль здесь не читаются, а наблюдений в окне тысячи.
+    runs = session.scalars(_lean(stmt, with_scenario=False)).all()
 
     buckets: dict[str, list[ScenarioRun]] = {}
     for run in runs:
@@ -890,7 +929,7 @@ def quality_overview(
     since = utcnow().date() - timedelta(days=window_days)
     stmt = select(ScenarioRun).where(ScenarioRun.observation_date >= since)
     stmt = _apply_filters(stmt, filters)
-    runs = session.scalars(stmt).all()
+    runs = session.scalars(_lean(stmt, with_scenario=False)).all()
 
     counts = _status_counts(runs)
     quality = [run.quality_score for run in runs if run.quality_score is not None]
@@ -923,9 +962,12 @@ def kpi_summary(session: Session, *, window_days: int = 7) -> dict[str, Any]:
     """Сводка KPI стабильности для мониторинга и отчетности."""
     since = utcnow().date() - timedelta(days=window_days)
     runs = session.scalars(
-        select(ScenarioRun)
-        .where(ScenarioRun.observation_date >= since)
-        .where(ScenarioRun.run_type == RunType.MONITORING.value)
+        _lean(
+            select(ScenarioRun)
+            .where(ScenarioRun.observation_date >= since)
+            .where(ScenarioRun.run_type == RunType.MONITORING.value),
+            with_scenario=False,
+        )
     ).all()
     counts = _status_counts(runs)
     return {
