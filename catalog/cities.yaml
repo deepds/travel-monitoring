@@ -112,3 +112,30 @@ cities:
     # ЖД-сценарии для этого города невалидны by design.
     supports_rail: false
     sort_order: 60
+
+  # Самара и Казань нужны витрине вариантов отдыха: вместе с Москвой,
+  # Петербургом и Сочи они образуют пятерку ключевых городов, между которыми
+  # наблюдаются все 20 направленных маршрутов.
+  - code: KUF
+    name: Самара
+    name_en: Samara
+    region: Самарская область
+    timezone: Europe/Samara
+    latitude: 53.1959
+    longitude: 50.1002
+    iata_codes: [KUF]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 70
+
+  - code: KZN
+    name: Казань
+    name_en: Kazan
+    region: Республика Татарстан
+    timezone: Europe/Moscow
+    latitude: 55.7963
+    longitude: 49.1088
+    iata_codes: [KZN]
+    supports_avia: true
+    supports_rail: true
+    sort_order: 80

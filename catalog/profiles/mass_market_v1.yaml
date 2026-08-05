@@ -1,0 +1,124 @@
+# Методика витрины вариантов отдыха.
+#
+# Отличается от `baseline` не качеством данных, а тем, ЧТО считается рынком для
+# массового туриста. Постановка пришла от заказчика и звучит так: купе только
+# категорий 2К и 2Д, авиа — все компании включая Аэрофлот, но невозвратные и
+# прямые, всплески не учитываем.
+#
+# Заведено отдельным профилем, а не правкой baseline, сознательно: активная
+# версия методики неизменяема, исторические расчеты остаются привязанными к
+# своей версии, а два профиля позволяют держать обе картины одновременно —
+# аналитическую на старом дашборде и витринную на новой странице.
+#
+# Три отличия от baseline 2.0.0:
+#
+#   1. `filters.rail_service_classes: [2К, 2Д]`
+#      Внутри купе цены различаются кратно: двухместное купе стоит вдвое против
+#      четырехместного. Медиана «по купе вообще» смешивает разные продукты.
+#      Класс обслуживания приходит от РЖД в `ServiceClasses` и хранится у
+#      предложения. Предложение без сообщенного класса в расчет не идет.
+#
+#   2. `filters.flights_non_refundable_only: true`
+#      Возвратный тариф продается с надбавкой и завышает медиану: на живых
+#      данных возвратных примерно половина выдачи.
+#
+#   3. `filters.flights_direct_only: true`
+#      Витрина показывает поездку, а не логистическую возможность. Стыковка
+#      через третий город дает формально верную, но бессмысленную цену — на
+#      Краснодаре и Сочи это давало 108 тысяч рублей за 10 часов в пути.
+#
+# «Не считаем всплески» отдельного правила не требует: отсечка выбросов по IQR
+# работает в базовой методике и наследуется здесь без изменений.
+
+code: mass-market
+name: Витрина вариантов отдыха
+version: "1.0.0"
+description: >
+  Методика массового сегмента для витрины по пяти ключевым городам: купе
+  категорий 2К и 2Д, невозвратные прямые авиарейсы, отсечка ценовых всплесков.
+  Пороги качества, агрегация и допуск источников совпадают с базовой методикой.
+
+rules:
+  filters:
+    require_base_currency: true
+    min_price: 1.0
+    max_price: null
+    require_capacity_confirmation: true
+    strict_baggage_classification: true
+    stars_exact_match: true
+    meal_at_least_requested: true
+    max_stops: null
+    enforce_cancellation_filter: true
+    allow_synthetic_sources: false
+    rail_service_classes: ["2К", "2Д"]
+    flights_non_refundable_only: true
+    flights_direct_only: true
+
+  eligibility:
+    min_valid_offers: 5
+    max_data_age_minutes: 120
+    max_invalid_offer_ratio: 0.30
+    max_unclassified_fare_ratio: 0.40
+    count_unreported_as_unclassified: false
+    min_offers_after_dedup: 3
+    min_offers_after_dedup_rail: 2
+    require_successful_call: true
+    min_source_confidence: null
+
+  outliers:
+    method: IQR
+    iqr_multiplier: 1.5
+    min_sample_size: 4
+    scope: PER_SOURCE
+    max_outlier_ratio: 0.4
+
+  aggregation:
+    per_source_statistic: MEDIAN
+    trim_ratio: 0.1
+    cross_source_method: MEDIAN_OF_MEDIANS
+    two_source_method: MEAN
+    percentile_method: LINEAR
+    high_disagreement_threshold: 0.30
+    allow_single_source: true
+
+  quality:
+    weights:
+      component_completeness: 0.30
+      source_count: 0.20
+      offer_count: 0.15
+      source_agreement: 0.15
+      freshness: 0.10
+      connector_stability: 0.10
+    partial_success_threshold: 60.0
+    target_source_count: 2
+    target_offer_count: 20
+    single_source_agreement_score: 0.5
+    default_connector_stability: 0.8
+    stability_window_days: 30
+
+  confidence:
+    high_min_quality: 80.0
+    medium_min_quality: 60.0
+    low_min_quality: 40.0
+    high_min_sources_per_component: 2
+    high_max_disagreement: 0.15
+    high_min_source_confidence: 60.0
+    max_unclassified_ratio: 0.40
+
+  limits:
+    source_soft_timeout_seconds: 20.0
+    source_hard_timeout_seconds: 30.0
+    on_demand_total_timeout_seconds: 60.0
+    max_retries: 2
+    max_offers_per_source: 300
+    result_cache_ttl_minutes: 45
+
+  transport_pricing:
+    rail_child_fare_ratio: 1.0
+    rail_child_max_age: 9
+    max_roundtrip_combinations: 64
+    roundtrip_legs_per_direction: 8
+
+  allowed_source_codes: []
+  excluded_source_codes: []
+  rounding_digits: 0

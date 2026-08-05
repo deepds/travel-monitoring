@@ -170,10 +170,13 @@ def profile_filter_reason(
                 if baggage == BaggageType.UNKNOWN
                 else "BAGGAGE_MISMATCH"
             )
-        if filters.max_stops is not None:
-            stops = max(flight.outbound_stops or 0, flight.inbound_stops or 0)
-            if stops > filters.max_stops:
-                return "TOO_MANY_STOPS"
+        if filters.flights_non_refundable_only and flight.refundability == "REFUNDABLE":
+            return "REFUNDABLE_FARE"
+        stops = max(flight.outbound_stops or 0, flight.inbound_stops or 0)
+        if filters.flights_direct_only and stops > 0:
+            return "NOT_DIRECT"
+        if filters.max_stops is not None and stops > filters.max_stops:
+            return "TOO_MANY_STOPS"
         return None
 
     if offer.offer_type == OfferType.RAIL.value:
@@ -189,6 +192,16 @@ def profile_filter_reason(
         # Плацкарт и купе агрегируются раздельно.
         if spec.rail_class is not None and rail.car_type != spec.rail_class.value:
             return "RAIL_CLASS_MISMATCH"
+        # Класс обслуживания внутри типа вагона. Цены различаются кратно:
+        # двухместное купе стоит вдвое против четырехместного, и смешивать их
+        # в одной медиане нельзя, если методика назвала конкретные категории.
+        if filters.rail_service_classes:
+            allowed = {item.upper() for item in filters.rail_service_classes}
+            observed = {str(item).upper() for item in (rail.service_classes or [])}
+            if not observed:
+                return "RAIL_SERVICE_CLASS_UNKNOWN"
+            if not observed & allowed:
+                return "RAIL_SERVICE_CLASS_MISMATCH"
         return None
 
     if spec.accommodation_type is None:
