@@ -365,6 +365,21 @@ class OutlierReport:
         }
 
 
+def _outside_bounds(price: float, bounds) -> bool:  # noqa: ANN001
+    """Лежит ли цена за границами IQR — с допуском на погрешность вычислений.
+
+    Цена, попавшая ровно на границу, выбросом не является. Сравнивать ее с
+    границей напрямую нельзя: граница получается арифметикой над числами с
+    плавающей точкой и промахивается на единицы последнего разряда. На живых
+    данных этого хватало, чтобы потерять самое дешевое предложение: плацкарт
+    Калининград — Москва стоил 13753.2, нижняя граница вычислялась как
+    13753.200000000004, и самый дешевый вариант поездки отбраковывался как
+    выброс — медиана вырастала с 13753 до 17191 рублей.
+    """
+    tolerance = max(abs(bounds.lower), abs(bounds.upper), 1.0) * 1e-9
+    return price < bounds.lower - tolerance or price > bounds.upper + tolerance
+
+
 def mark_outliers(
     offers: Sequence[Offer], rules: ProfileRules, stats: SelectionStats
 ) -> OutlierReport:
@@ -407,7 +422,7 @@ def mark_outliers(
         flagged = [
             offer
             for offer, price in zip(bucket, prices)
-            if price is not None and (float(price) < bounds.lower or float(price) > bounds.upper)
+            if price is not None and _outside_bounds(float(price), bounds)
         ]
         # Предохранитель: правило, отбраковывающее слишком много, скорее всего
         # применено к неоднородной выборке — тогда маркировка отменяется.
