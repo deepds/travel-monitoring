@@ -54,6 +54,9 @@ fi
 
 echo
 echo "=== 3/4 Задачи за сутки ==="
+# Сразу после seed-restore.sh здесь и в следующем разделе видна история стенда,
+# с которого снят слепок, а не работа этой машины. Своей она станет по мере
+# того, как отработает местный планировщик.
 psql_q -F' | ' -c "
   select status, count(*)::text, 'последняя: ' || max(created_at)::text
   from jobs where created_at > now() - interval '24 hours'

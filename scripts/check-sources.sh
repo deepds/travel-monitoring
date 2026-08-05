@@ -76,19 +76,49 @@ $COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -F' | ' -c "
 echo
 if [ "$LIVE" = true ]; then
   echo "=== 3/3 Пробный сбор по одному сценарию ==="
-  echo "Идет обращение к источникам, это занимает до минуты..."
-  $COMPOSE exec -T api python -m tco.cli run-monitoring --limit 1 --force
+
+  # Отсчет берется из базы, а не из `date` на хосте: часы контейнера и хоста
+  # расходятся, и по хостовому времени результаты сбора не находились бы.
+  START=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c 'select now()')
+
+  # Команда ставит задачу в очередь и сразу возвращает DISPATCHED — читать
+  # результаты сразу после нее бессмысленно, их еще не записал воркер.
+  $COMPOSE exec -T api python -m tco.cli run-monitoring --limit 1 --force >/dev/null 2>&1 \
+    || { echo "Не удалось поставить задачу — жив ли worker? $COMPOSE ps worker" >&2; exit 1; }
+
+  printf 'Задача поставлена, идет обращение к источникам '
+  done_at=""
+  for _ in $(seq 1 40); do
+    pending=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c "
+      select count(*) from jobs
+      where created_at >= '$START'
+        and status not in ('SUCCESS','FAILED','CANCELLED','TIMED_OUT','PARTIAL')" 2>/dev/null || echo 1)
+    started=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c "
+      select count(*) from jobs where created_at >= '$START'" 2>/dev/null || echo 0)
+    if [ "${started:-0}" -gt 0 ] && [ "${pending:-1}" -eq 0 ]; then done_at=ok; break; fi
+    printf '.'
+    sleep 3
+  done
   echo
-  echo "Результаты источников последнего снимка:"
+
+  if [ -z "$done_at" ]; then
+    echo "Сбор не завершился за 2 минуты. Смотрите: $COMPOSE logs --tail 50 worker"
+    fail=1
+  fi
+
+  echo
+  echo "Что вернули источники:"
   $COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -F' | ' -c "
     select r.source_code, r.outcome,
            'предложений: ' || r.valid_offer_count,
            'задержка: ' || coalesce(r.latency_ms::text, '-') || ' мс',
            coalesce(left(r.error_message, 60), '')
     from snapshot_source_results r
-    join market_snapshots s on s.id = r.market_snapshot_id
-    where s.id = (select id from market_snapshots order by observed_at desc limit 1)
+    where r.collected_at >= '$START'
     order by r.source_code" 2>/dev/null || echo "(нет данных)"
+  [ -z "$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c \
+      "select 1 from snapshot_source_results where collected_at >= '$START' limit 1" 2>/dev/null)" ] \
+    && echo "(источники не ответили ни разу — смотрите логи воркера)" && fail=1
 else
   echo "=== 3/3 Пробный сбор пропущен ==="
   echo "Чтобы проверить сбор вживую: bash scripts/check-sources.sh --live"
