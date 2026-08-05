@@ -431,30 +431,49 @@ def collect_into_snapshot(
         stats = _source_stats(result, normalized)
         collection_summary[f"{task.source.code}:{task.offer_type.value}"] = stats
 
-        session.add(
-            SnapshotSourceResult(
-                market_snapshot_id=snapshot.id,
-                source_id=task.source.id,
-                source_code=task.source.code,
-                source_name=task.source.name,
-                offer_type=task.offer_type.value,
-                is_synthetic=task.source.is_synthetic,
-                outcome=result.outcome.value,
-                latency_ms=result.latency_ms,
-                attempts=result.attempts,
-                raw_offer_count=result.offer_count,
-                normalized_offer_count=len(normalized),
-                valid_offer_count=stats["valid_offer_count"],
-                invalid_offer_count=stats["invalid_offer_count"],
-                unclassified_offer_count=stats["unclassified_offer_count"],
-                duplicate_offer_count=0,
-                required_field_completeness=stats["required_field_completeness"],
-                error_code=result.error_code,
-                error_message=result.error_message,
-                connector_version=result.connector_version,
-                collected_at=snapshot.observed_at,
+        # Повторный сбор в то же окно наблюдения переиспользует снимок, а
+        # результат источника уникален по тройке снимок-источник-компонента.
+        # Поэтому запись обновляется, а не добавляется: иначе повторный сбор
+        # падает на уникальном индексе, снимок остается пустой оболочкой, а
+        # расчет по нему выходит NO_DATA и перекрывает прежний удачный.
+        fields = {
+            "source_code": task.source.code,
+            "source_name": task.source.name,
+            "is_synthetic": task.source.is_synthetic,
+            "outcome": result.outcome.value,
+            "latency_ms": result.latency_ms,
+            "attempts": result.attempts,
+            "raw_offer_count": result.offer_count,
+            "normalized_offer_count": len(normalized),
+            "valid_offer_count": stats["valid_offer_count"],
+            "invalid_offer_count": stats["invalid_offer_count"],
+            "unclassified_offer_count": stats["unclassified_offer_count"],
+            "duplicate_offer_count": 0,
+            "required_field_completeness": stats["required_field_completeness"],
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+            "connector_version": result.connector_version,
+            "collected_at": snapshot.observed_at,
+        }
+        existing_result = session.scalars(
+            select(SnapshotSourceResult).where(
+                SnapshotSourceResult.market_snapshot_id == snapshot.id,
+                SnapshotSourceResult.source_id == task.source.id,
+                SnapshotSourceResult.offer_type == task.offer_type.value,
             )
-        )
+        ).first()
+        if existing_result is not None:
+            for name, value in fields.items():
+                setattr(existing_result, name, value)
+        else:
+            session.add(
+                SnapshotSourceResult(
+                    market_snapshot_id=snapshot.id,
+                    source_id=task.source.id,
+                    offer_type=task.offer_type.value,
+                    **fields,
+                )
+            )
         session.add(
             SourceMetric(
                 source_id=task.source.id,
