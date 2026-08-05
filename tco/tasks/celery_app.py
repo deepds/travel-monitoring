@@ -60,10 +60,22 @@ _snapshot_hours = (
 _snapshot_expires = max(300, _interval_hours * 3600 - 300)
 
 celery_app.conf.beat_schedule = {
+    # Каталог направлений — по общему интервалу наблюдения. Сетка витрины из
+    # него исключена: она на порядок больше и наблюдается раз в сутки, иначе
+    # часовой прогон давал бы 42 тысячи обращений к источникам в сутки.
     "monitoring-snapshot": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="5", hour=_snapshot_hours),
         "options": {"queue": "compute", "expires": _snapshot_expires},
+        "kwargs": {"without_tag": "showcase-grid"},
+    },
+    # Сетка витрины: раз в сутки, после того как ее достроила обслуживающая
+    # задача. Кривая по датам отправления суточного шага и требует.
+    "showcase-grid-snapshot-daily": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="0", hour="1"),
+        "options": {"queue": "compute", "expires": 20 * 3600},
+        "kwargs": {"with_tag": "showcase-grid"},
     },
     # Раньше планового сбора: сетка должна быть достроена к моменту, когда
     # начнется наблюдение, иначе самая дальняя дата горизонта пропустит сутки.

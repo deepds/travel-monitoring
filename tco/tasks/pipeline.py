@@ -511,12 +511,25 @@ def maintain_observation_grid(
 
 @shared_task(name="tco.monitoring.refresh_all_monitoring_scenarios", bind=True)
 def refresh_all_monitoring_scenarios(
-    self, profile_id: str | None = None, force_refresh: bool = False, limit: int | None = None  # noqa: ANN001
+    self,  # noqa: ANN001
+    profile_id: str | None = None,
+    force_refresh: bool = False,
+    limit: int | None = None,
+    with_tag: str | None = None,
+    without_tag: str | None = None,
 ) -> dict[str, Any]:
-    """Плановый прогон всех активных сценариев мониторинга.
+    """Плановый прогон активных сценариев мониторинга.
 
     Параллелизм — на уровне сценариев: это и есть узкое место при 100+
     сценариях, четыре раза в сутки.
+
+    ``with_tag`` и ``without_tag`` разводят частоты наблюдения. Сетка витрины
+    (1650 сценариев) наблюдается раз в сутки, каталог направлений — по общему
+    интервалу; без такого деления сетка попадала бы в каждый часовой прогон и
+    давала бы 42 тысячи обращений к источникам в сутки вместо 2500.
+
+    Отбор по тегу идет в Python: ``JSONB.contains`` есть только в PostgreSQL,
+    а на SQLite молча не находит ничего.
     """
     settings = get_settings()
     today = utcnow().date()
@@ -530,6 +543,10 @@ def refresh_all_monitoring_scenarios(
             .order_by(TravelScenario.priority, TravelScenario.code)
         ).all()
         active = [item for item in scenarios if item.is_active_on(today)]
+        if with_tag:
+            active = [item for item in active if with_tag in (item.tags or [])]
+        if without_tag:
+            active = [item for item in active if without_tag not in (item.tags or [])]
         if limit:
             active = active[:limit]
 
