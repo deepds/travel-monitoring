@@ -69,6 +69,11 @@ $COMPOSE --profile tools run --rm migrate
 echo "=== 5/5 Перезапуск сервисов ==="
 $COMPOSE up -d
 
+# Контейнер ui пересоздается только при изменении фронтенда, а адрес api
+# меняется при каждом его пересоздании. Перезапуск нужен, чтобы nginx перечитал
+# адрес: иначе после правки одного бэкенда интерфейс отвечает 502 на /api/.
+$COMPOSE restart ui >/dev/null
+
 sleep 10
 echo
 echo "=== Состояние ==="
@@ -82,4 +87,8 @@ $COMPOSE exec -T postgres psql -U "${POSTGRES_USER:-tco}" -d "${POSTGRES_DB:-tco
   union all select 'предложений', count(*) from offers" 2>/dev/null || echo "(база еще недоступна)"
 
 echo
-curl -fsS "http://127.0.0.1:${API_PORT:-8000}/api/v1/health/ready" && echo || echo "health/ready пока не отвечает"
+# API_PORT может задавать интерфейс — «127.0.0.1:8000», чтобы порт не смотрел
+# в сеть. В URL нужен только номер, иначе curl отвергает адрес целиком.
+HEALTH_PORT="${API_PORT:-8000}"
+curl -fsS "http://127.0.0.1:${HEALTH_PORT##*:}/api/v1/health/ready" && echo \
+  || echo "health/ready пока не отвечает"

@@ -1,0 +1,20 @@
+# Переводы строк.
+#
+# Часть файлов исполняется на Linux, и виндовый CR ломает их молча и не там,
+# где ожидаешь: `.env` с CRLF проходит через парсер Compose, но `deploy.sh`
+# читает его через `. ./.env`, и CR остается в значениях — имя проекта
+# становится "tco\r", а сборка падает с невнятной ошибкой.
+*.sh            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+.env.example    text eol=lf
+Dockerfile      text eol=lf
+*.inc           text eol=lf
+nginx.conf      text eol=lf
+
+# Двоичные файлы git не нормализует и не показывает построчно.
+*.dump          binary
+*.ttf           binary
+*.docx          binary
+*.png           binary
+*.jpg           binary
