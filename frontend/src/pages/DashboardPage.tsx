@@ -7,7 +7,8 @@ import type { DirectionRow } from '@/api/types';
 import {
   AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle, PriceRange,
 } from '@/components/common';
-import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
+import { TOTAL_COLOR, applyChartTheme, rangeSeries } from '@/utils/charts';
+import { useTheme } from '@/theme/ThemeContext';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
 import {
@@ -39,6 +40,7 @@ function SectionTitle({ children, hint }: { children: string; hint?: string }) {
 }
 
 export default function DashboardPage() {
+  const { resolved } = useTheme();
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [trendDays, setTrendDays] = useState(30);
   const [granularity, setGranularity] = useState<'DAY' | 'SNAPSHOT'>('DAY');
@@ -286,7 +288,11 @@ export default function DashboardPage() {
               emptyText="История еще не накоплена"
               minHeight={320}
             >
-              <ReactECharts option={trendOption} style={{ height: 320 }} notMerge />
+              <ReactECharts
+                option={applyChartTheme(trendOption, resolved)}
+                style={{ height: 320 }}
+                notMerge
+              />
             </AsyncBlock>
           </Card>
         </Col>
@@ -298,7 +304,11 @@ export default function DashboardPage() {
               empty={(structure.data?.components ?? []).length === 0}
               minHeight={320}
             >
-              <ReactECharts option={structureOption} style={{ height: 260 }} notMerge />
+              <ReactECharts
+                option={applyChartTheme(structureOption, resolved)}
+                style={{ height: 260 }}
+                notMerge
+              />
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {structure.data?.note as string}
               </Text>

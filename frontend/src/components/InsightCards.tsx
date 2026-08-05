@@ -15,6 +15,8 @@ import { api } from '@/api/client';
 import type { Premium, SourceGapRow, SpreadRow } from '@/api/types';
 import { AsyncBlock } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
+import { useTheme } from '@/theme/ThemeContext';
+import { applyChartTheme } from '@/utils/charts';
 import {
   TRANSPORT_LABEL, dateOnly, money, num, signedPercent, sourceLabel,
 } from '@/utils/format';
@@ -31,6 +33,7 @@ function route(row: { origin_city_name: string; destination_city_name: string })
 
 /** Цена по датам вылета — индекс к типичной стоимости своего направления. */
 export function DepartureDatesCard({ query }: { query?: Query }) {
+  const { resolved } = useTheme();
   const data = useAsync(() => api.departureDates(query), deps(query));
   const points = data.data?.points ?? [];
 
@@ -91,7 +94,11 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
               Отношение к типичной стоимости своего направления по {data.data?.comparable_routes}{' '}
               сопоставимым маршрутам.
             </Text>
-            <ReactECharts option={option} style={{ height: 260, marginTop: 8 }} notMerge />
+            <ReactECharts
+              option={applyChartTheme(option, resolved)}
+              style={{ height: 260, marginTop: 8 }}
+              notMerge
+            />
             <Alert
               type="info"
               showIcon

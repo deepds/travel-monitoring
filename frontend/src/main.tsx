@@ -1,4 +1,4 @@
-import { ConfigProvider, App as AntApp, theme } from 'antd';
+import { ConfigProvider, App as AntApp } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 import dayjs from 'dayjs';
 import 'dayjs/locale/ru';
@@ -8,24 +8,17 @@ import { BrowserRouter } from 'react-router-dom';
 
 import App from './App';
 import { AuthProvider } from './auth/AuthContext';
+import { ThemeProvider, useTheme } from './theme/ThemeContext';
+import { antdTheme } from './theme/antdTheme';
 import './index.css';
 
 dayjs.locale('ru');
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ConfigProvider
-      locale={ruRU}
-      theme={{
-        algorithm: theme.defaultAlgorithm,
-        token: {
-          colorPrimary: '#1668dc',
-          borderRadius: 6,
-          fontFamily:
-            "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-        },
-      }}
-    >
+/** Тема живет выше ConfigProvider, чтобы смена цвета перестраивала компоненты. */
+function Themed() {
+  const { resolved } = useTheme();
+  return (
+    <ConfigProvider locale={ruRU} theme={antdTheme(resolved)}>
       <AntApp>
         <BrowserRouter>
           <AuthProvider>
@@ -34,5 +27,13 @@ createRoot(document.getElementById('root')!).render(
         </BrowserRouter>
       </AntApp>
     </ConfigProvider>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <ThemeProvider>
+      <Themed />
+    </ThemeProvider>
   </StrictMode>,
 );

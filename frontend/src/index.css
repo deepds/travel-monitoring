@@ -1,3 +1,6 @@
+@import './styles/fonts.css';
+@import './styles/tokens.css';
+
 html,
 body,
 #root {
@@ -7,7 +10,13 @@ body,
 }
 
 body {
-  background: #f5f6f8;
+  background: var(--tco-bg);
+  color: var(--tco-text);
+  font-family: var(--tco-font-body);
+  /* Плавный переход, чтобы смена темы не выглядела вспышкой. */
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
 }
 
 /* Таблицы аналитики часто шире экрана — прокрутка должна жить внутри блока,
@@ -23,10 +32,65 @@ body {
 }
 
 .tco-monospace {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--tco-font-mono);
   font-size: 12px;
 }
 
 .tco-clickable {
   cursor: pointer;
+}
+
+/* Заголовки и крупные числа — акцидентным шрифтом: он отделяет показатель от
+   подписей и делает дашборд читаемым по диагонали. */
+.tco-display {
+  font-family: var(--tco-font-display);
+  letter-spacing: 0.01em;
+}
+
+.ant-typography h1,
+.ant-typography h2,
+.ant-typography h3,
+h1.ant-typography,
+h2.ant-typography,
+h3.ant-typography,
+h4.ant-typography,
+h5.ant-typography {
+  font-family: var(--tco-font-display);
+  letter-spacing: 0.01em;
+}
+
+/* Логотип в боковом меню. */
+.tco-brand {
+  padding: 16px;
+  border-bottom: 1px solid var(--tco-border-subtle);
+}
+
+.tco-brand-title {
+  font-family: var(--tco-font-display);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--tco-text);
+}
+
+.tco-brand-subtitle {
+  font-size: 11px;
+  color: var(--tco-text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* Главная цифра расчета. */
+.tco-headline {
+  font-family: var(--tco-font-display);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--tco-text);
+}
+
+.ant-layout-header {
+  border-bottom: 1px solid var(--tco-border-subtle);
+}
+
+.ant-layout-sider {
+  border-right: 1px solid var(--tco-border-subtle);
 }

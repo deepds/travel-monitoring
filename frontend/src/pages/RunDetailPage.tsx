@@ -57,7 +57,7 @@ export default function RunDetailPage() {
             <Card size="small" title="Стоимость">
               <div style={{ marginBottom: 16 }}>
                 <Text type="secondary">Расчетная типовая стоимость путешествия</Text>
-                <div style={{ fontSize: 32, fontWeight: 600 }}>
+                <div className="tco-headline" style={{ fontSize: 32 }}>
                   {money(data?.total_estimated_cost)}
                 </div>
                 <Text type="secondary">

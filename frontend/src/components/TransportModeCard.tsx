@@ -15,6 +15,8 @@ import { api } from '@/api/client';
 import type { DirectionRow } from '@/api/types';
 import { AsyncBlock } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
+import { useTheme } from '@/theme/ThemeContext';
+import { applyChartTheme } from '@/utils/charts';
 import { money, percent } from '@/utils/format';
 
 const { Text } = Typography;
@@ -63,6 +65,7 @@ function buildPairs(rows: DirectionRow[]): Pair[] {
 }
 
 export function TransportModeCard({ query }: { query?: Query }) {
+  const { resolved } = useTheme();
   const directions = useAsync(() => api.directions(query), [JSON.stringify(query ?? {})]);
   const pairs = useMemo(() => buildPairs(directions.data?.items ?? []), [directions.data]);
 
@@ -98,7 +101,11 @@ export function TransportModeCard({ query }: { query?: Query }) {
             <Text type="secondary">
               Стоимость проезда без учета проживания — оно одинаково для обоих способов.
             </Text>
-            <ReactECharts option={option} style={{ height: 260, marginTop: 8 }} notMerge />
+            <ReactECharts
+              option={applyChartTheme(option, resolved)}
+              style={{ height: 260, marginTop: 8 }}
+              notMerge
+            />
 
             <Table<Pair>
               size="small"

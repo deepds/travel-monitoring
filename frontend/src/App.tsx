@@ -9,6 +9,8 @@ import { useMemo } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { useAuth } from '@/auth/AuthContext';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { useTheme } from '@/theme/ThemeContext';
 import { ENVIRONMENT_LABEL, USER_ROLE_LABEL, labelOf } from '@/utils/format';
 import AuditPage from '@/pages/AuditPage';
 import ConstructorPage from '@/pages/ConstructorPage';
@@ -60,6 +62,7 @@ const NAV: NavItem[] = [
 
 export default function App() {
   const { principal, version, loading, logout, can } = useAuth();
+  const { resolved } = useTheme();
   const location = useLocation();
 
   const items = useMemo(
@@ -89,20 +92,28 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider breakpoint="lg" collapsedWidth="0" width={230} theme="dark">
-        <div style={{ padding: '18px 16px', color: '#fff' }}>
-          <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.3 }}>
+      {/* Меню следует теме целиком: раньше сайдбар был темным всегда, и в
+          светлой теме экран делился на две несвязанные половины. */}
+      <Sider breakpoint="lg" collapsedWidth="0" width={230} theme={resolved}>
+        <div className="tco-brand">
+          <div className="tco-brand-title">
             <DatabaseOutlined /> Мониторинг
           </div>
-          <div style={{ fontSize: 12, opacity: 0.65 }}>стоимости путешествий</div>
+          <div className="tco-brand-subtitle">стоимости путешествий</div>
         </div>
-        <Menu theme="dark" mode="inline" selectedKeys={selected} items={items} />
+        <Menu
+          theme={resolved}
+          mode="inline"
+          selectedKeys={selected}
+          items={items}
+          style={{ borderInlineEnd: 'none', paddingInline: 8, paddingTop: 8 }}
+        />
       </Sider>
 
       <Layout>
         <Header
           style={{
-            background: '#fff', display: 'flex', alignItems: 'center',
+            display: 'flex', alignItems: 'center',
             justifyContent: 'space-between', padding: '0 24px', gap: 16,
           }}
         >
@@ -116,6 +127,7 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <ThemeToggle />
             <Text type="secondary">
               {principal.display_name ?? principal.username}
             </Text>

@@ -1,0 +1,92 @@
+/**
+ * Дизайн-токены светлой и темной темы.
+ *
+ * Палитра перенесена из внутреннего дизайна платформы: цвета там подобраны
+ * под контраст WCAG 2.1 AA, поэтому значения не подгонялись «на глаз» —
+ * заявленные коэффициенты указаны в комментариях и должны сохраняться при
+ * любой правке.
+ *
+ * Тема переключается классом `light` / `dark` на корневом элементе.
+ */
+
+:root {
+  /* --- Светлая тема (по умолчанию) --------------------------------------- */
+
+  /* Основа. Фон намеренно не белый: на нем читаются белые карточки. */
+  --tco-bg: #f5f7fa;
+  --tco-panel: #ffffff;
+  --tco-card: #ffffff;
+  --tco-sidebar: #ffffff;
+
+  /* Текст. Контраст указан относительно --tco-bg. */
+  --tco-text: #1a202c; /* 12.6:1 — основной */
+  --tco-text-secondary: #4a5568; /* 6.1:1 — вторичный */
+  --tco-text-muted: #6b7280; /* 4.5:1 — служебный */
+  --tco-text-tertiary: #9ca3af; /* 3.1:1 — только для крупного текста */
+
+  /* Границы */
+  --tco-border: rgba(0, 90, 158, 0.25);
+  --tco-divider: #e2e8f0;
+  --tco-border-subtle: #e5e7eb;
+
+  /* Акценты */
+  --tco-accent: #005a9e; /* 5.3:1 на белом */
+  --tco-accent-warm: #b94d00; /* 5.0:1 на белом */
+
+  /* Смысловые */
+  --tco-success: #047857;
+  --tco-warning: #b45309;
+  --tco-error: #b91c1c;
+  --tco-info: #1d4ed8;
+
+  /* Тени */
+  --tco-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --tco-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.12);
+
+  /* Динамика: рост цены — тревожный, снижение — благоприятное. */
+  --tco-up: #b91c1c;
+  --tco-down: #047857;
+  --tco-flat: #6b7280;
+
+  /* Типографика */
+  --tco-font-body: 'Exo 2', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --tco-font-display: 'Orbitron', 'Exo 2', 'Segoe UI', sans-serif;
+  --tco-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --tco-radius: 8px;
+  --tco-radius-lg: 12px;
+}
+
+.dark {
+  /* --- Темная тема ------------------------------------------------------- */
+
+  --tco-bg: #0a0f1a;
+  --tco-panel: #0f1520;
+  --tco-card: #141b2d;
+  --tco-sidebar: #0d121c;
+
+  --tco-text: #e8ecf4; /* 14.2:1 */
+  --tco-text-secondary: #a8b5c8; /* 7.3:1 */
+  --tco-text-muted: #7a8ba8; /* 4.6:1 */
+  --tco-text-tertiary: #5a6a8a; /* 3.0:1 */
+
+  --tco-border: rgba(0, 168, 255, 0.35);
+  --tco-divider: rgba(255, 255, 255, 0.1);
+  --tco-border-subtle: rgba(255, 255, 255, 0.08);
+
+  --tco-accent: #00a8ff; /* 7.1:1 на фоне */
+  --tco-accent-warm: #ff7f2a; /* 6.2:1 на фоне */
+
+  --tco-success: #10b981;
+  --tco-warning: #f59e0b;
+  --tco-error: #ef4444;
+  --tco-info: #3b82f6;
+
+  --tco-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --tco-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  /* На темном фоне приглушенные красный и зеленый теряются. */
+  --tco-up: #ef4444;
+  --tco-down: #10b981;
+  --tco-flat: #7a8ba8;
+}

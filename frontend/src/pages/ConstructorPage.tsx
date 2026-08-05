@@ -430,7 +430,7 @@ function RunResult({ run }: { run: Run }) {
 
       <div style={{ marginBottom: 16 }}>
         <Text type="secondary">Расчетная типовая стоимость</Text>
-        <div style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.2 }}>
+        <div className="tco-headline" style={{ fontSize: 34 }}>
           {money(run.total_estimated_cost)}
         </div>
         <Text type="secondary">

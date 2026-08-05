@@ -7,7 +7,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api } from '@/api/client';
 import { AsyncBlock, PageTitle, RunStatusTag } from '@/components/common';
 import { ScenarioDeleteModal } from '@/components/ScenarioDialogs';
-import { TOTAL_COLOR, rangeSeries } from '@/utils/charts';
+import { TOTAL_COLOR, applyChartTheme, rangeSeries } from '@/utils/charts';
+import { useTheme } from '@/theme/ThemeContext';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
 import {
@@ -17,6 +18,7 @@ import {
 } from '@/utils/format';
 
 export default function ScenarioDetailPage() {
+  const { resolved } = useTheme();
   const { id = '' } = useParams();
   const { message } = App.useApp();
   const { can } = useAuth();
@@ -219,7 +221,11 @@ export default function ScenarioDetailPage() {
                 emptyText="Расчетов по сценарию еще не было"
                 minHeight={300}
               >
-                <ReactECharts option={chartOption} style={{ height: 300 }} notMerge />
+                <ReactECharts
+                  option={applyChartTheme(chartOption, resolved)}
+                  style={{ height: 300 }}
+                  notMerge
+                />
               </AsyncBlock>
             </Card>
           </Col>
