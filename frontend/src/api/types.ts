@@ -710,6 +710,8 @@ export interface ShowcaseOption {
 export interface ShowcaseOptions {
   origin_code: string;
   origin_name: string;
+  /** Методика витрины: разовый расчет для дат вне сетки идет по ней же. */
+  profile_id: string | null;
   departure_date: string;
   return_date: string;
   nights: number;

@@ -30,8 +30,10 @@ from tco.db.models.reference import City
 from tco.db.models.run import ScenarioRun
 from tco.db.models.scenario import TravelScenario
 from tco.engine.statistics import percentile
+from tco.db.models.profile import CalculationProfile
 from tco.services.observation_grid import (
     CANONICAL_NIGHTS,
+    GRID_PROFILE_CODE,
     GRID_TAG,
     HORIZON_DAYS,
     SHOWCASE_ADULTS,
@@ -188,9 +190,17 @@ def options(
             }
         )
 
+    # Идентификатор методики нужен интерфейсу: разовый расчет для дат вне сетки
+    # должен считаться теми же правилами, иначе его цифра несопоставима с
+    # остальной витриной.
+    profile = session.scalars(
+        select(CalculationProfile).where(CalculationProfile.code == GRID_PROFILE_CODE)
+    ).first()
+
     return {
         "origin_code": origin,
         "origin_name": names.get(origin, origin),
+        "profile_id": str(profile.id) if profile else None,
         "departure_date": departure_date.isoformat(),
         "return_date": return_date.isoformat(),
         "nights": (return_date - departure_date).days,

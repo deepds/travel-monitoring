@@ -97,7 +97,9 @@ class TestLatestRuns:
         self, session, scenario_with_history
     ):
         """Историческое сравнение берет последнее наблюдение на свою дату."""
-        as_of = date.today() - timedelta(days=1)
+        # Дата берется в UTC, как и у наблюдений: с локальной датой тест
+        # разъезжается на переходе через полночь и падает раз в сутки.
+        as_of = utcnow().date() - timedelta(days=1)
         runs = _runs_of(
             scenario_with_history, latest_runs(session, DashboardFilters(), as_of=as_of)
         )

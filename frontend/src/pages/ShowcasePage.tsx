@@ -8,13 +8,16 @@
  * Старый дашборд остается на месте: он про наблюдение рынка, а этот про выбор.
  */
 
-import { Alert, Card, Col, DatePicker, Empty, Row, Segmented, Select, Table, Typography } from 'antd';
+import {
+  Alert, App, Button, Card, Col, DatePicker, Empty, Row, Segmented, Select, Space, Table, Typography,
+} from 'antd';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useMemo, useState } from 'react';
 
-import { api } from '@/api/client';
+import { ApiError, api } from '@/api/client';
 import type { ShowcaseOption } from '@/api/types';
+import { useAuth } from '@/auth/AuthContext';
 import { AsyncBlock, MetricDisclaimer, PageTitle } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
 import { useTheme } from '@/theme/ThemeContext';
@@ -52,8 +55,14 @@ function SectionTitle({ children, hint }: { children: string; hint?: string }) {
   );
 }
 
+/** Состояния задачи, после которых ждать больше нечего. */
+const TERMINAL = new Set(['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'PARTIAL']);
+
 export default function ShowcasePage() {
   const { resolved } = useTheme();
+  const { can } = useAuth();
+  const { message } = App.useApp();
+  const [calculating, setCalculating] = useState(false);
   const cities = useAsync(() => api.showcaseCities(), []);
   const cityOptions = useMemo(
     () => (cities.data?.items ?? []).map((item) => ({ label: item.name, value: item.code })),
@@ -150,6 +159,57 @@ export default function ShowcasePage() {
 
   const emptyOptions = (options.data?.items ?? []).every((item) => item.total === null);
 
+  /**
+   * Разовый расчет для дат вне сетки.
+   *
+   * Считается тем же профилем, что и вся витрина: иначе его цифра
+   * несопоставима с соседними и разница будет выглядеть движением рынка.
+   * Ждем завершения задач, а не просто ставим их: без ожидания пользователь
+   * увидит ту же пустую таблицу и решит, что кнопка не сработала.
+   */
+  const runOnDemand = async () => {
+    const destinations = (options.data?.items ?? []).map((item) => item.destination_code);
+    if (!destinations.length) return;
+
+    setCalculating(true);
+    try {
+      const jobs = await Promise.all(
+        destinations.map((destination) =>
+          api.createCalculation({
+            profile_id: options.data?.profile_id ?? undefined,
+            scenario: {
+              origin_city_code: origin,
+              destination_city_code: destination,
+              departure_date: departureKey,
+              return_date: returnKey,
+              adults: 1,
+              transport_type: transport,
+              flight_fare_type: transport === 'AVIA' ? 'CHEAPEST' : null,
+              rail_class: transport === 'RAIL' ? 'COMPARTMENT' : null,
+              accommodation_type: 'HOTEL',
+              stars,
+              scenario_type: 'ON_DEMAND',
+            },
+          }),
+        ),
+      );
+
+      const pending = jobs.map((job: any) => job.job_id).filter(Boolean);
+      for (let attempt = 0; attempt < 40 && pending.length; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const states = await Promise.all(pending.map((id: string) => api.calculation(id)));
+        if (states.every((job) => TERMINAL.has(job.status))) break;
+      }
+      options.reload();
+    } catch (error) {
+      message.error(
+        error instanceof ApiError ? error.message : 'Не удалось запустить расчет',
+      );
+    } finally {
+      setCalculating(false);
+    }
+  };
+
   return (
     <>
       <PageTitle
@@ -231,7 +291,29 @@ export default function ShowcasePage() {
           <Card size="small">
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="На эти даты наблюдений еще нет. Выберите дату в пределах месяца вперед."
+              description={
+                <Space direction="vertical" size={8}>
+                  <span>
+                    На эти даты наблюдений нет: сетка покрывает месяц вперед, поездку
+                    длиной {GRID_NIGHTS} ночей.
+                  </span>
+                  {can('ANALYST') ? (
+                    <Button type="primary" loading={calculating} onClick={runOnDemand}>
+                      Рассчитать эти даты
+                    </Button>
+                  ) : (
+                    <Text type="secondary">
+                      Разовый расчет доступен аналитику.
+                    </Text>
+                  )}
+                  {calculating ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Идет обращение к источникам по четырем направлениям, это занимает
+                      до минуты.
+                    </Text>
+                  ) : null}
+                </Space>
+              }
             />
           </Card>
         ) : (
