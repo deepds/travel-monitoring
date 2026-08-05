@@ -13,7 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Collection, Sequence
 
-from tco.core.enums import ComponentType, ConnectorOutcome, ExclusionReason
+from tco.core.enums import ComponentType, ConnectorOutcome, ExclusionReason, OfferType
 from tco.core.utils import minutes_between, to_decimal, utcnow
 from tco.db.models.offer import Offer
 from tco.engine.selection import unclassified_attributes
@@ -195,6 +195,18 @@ class ComponentAggregate:
 # --------------------------------------------------------------------------- #
 
 
+def _min_offers_after_dedup(eligibility, offers: Sequence[Offer]) -> int:  # noqa: ANN001
+    """Порог по числу предложений с поправкой на ЖД.
+
+    Тип компоненты (``ComponentType``) различает только транспорт и
+    проживание, поэтому вид транспорта берется у самих предложений: порог
+    ослабляется, только когда вся выборка источника железнодорожная.
+    """
+    if offers and all(offer.offer_type == OfferType.RAIL.value for offer in offers):
+        return eligibility.min_offers_after_dedup_rail
+    return eligibility.min_offers_after_dedup
+
+
 def check_eligibility(
     info: SourceCollectionInfo,
     counted_offers: Sequence[Offer],
@@ -226,10 +238,11 @@ def check_eligibility(
             f"Валидных предложений {len(valid_offers)} < {eligibility.min_valid_offers}"
         )
 
-    if len(counted_offers) < eligibility.min_offers_after_dedup:
+    min_after_dedup = _min_offers_after_dedup(eligibility, all_source_offers)
+    if len(counted_offers) < min_after_dedup:
         reasons.append(
             f"После дедупликации и фильтрации осталось {len(counted_offers)} "
-            f"< {eligibility.min_offers_after_dedup}"
+            f"< {min_after_dedup}"
         )
 
     total = len(all_source_offers)

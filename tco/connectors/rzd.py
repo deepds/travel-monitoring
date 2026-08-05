@@ -433,12 +433,35 @@ def _parse_trains(payload: Any) -> list[dict[str, Any]]:
                 continue
             if group.get("IsSaleForbidden") is True:
                 continue
+            # Места целевого назначения — не рыночное предложение. Это два
+            # места в вагоне по льготной цене: на Калининграде — Москве купе
+            # для инвалидов стоило 4 169 ₽ против 6 213 ₽ в обычном купе того
+            # же поезда, и такая группа занижала наблюдаемый минимум.
+            #
+            # Отбор идет по признаку группы, а не параметром запроса:
+            # `SpecialPlacesDemand: StandardPlaces` источник принимает, но
+            # возвращает на него ноль поездов.
+            if group.get("HasPlacesForDisabledPersons") is True:
+                continue
             car_type = _map_car_type(group)
             if car_type is None:
                 # Люкс, СВ и сидячие вагоны вне поддерживаемых MVP классов.
                 continue
             price = to_decimal(group.get("MinPrice") or group.get("Price"))
             if price is None:
+                continue
+            # Вагон без мест в продаже наблюдением не является: цена по нему
+            # остается справочной, купить по ней нельзя.
+            #
+            # Поля читаются через явную проверку на None, а не через ``or``:
+            # ноль мест — осмысленное значение, и на ``or`` он проваливался в
+            # запасное поле, а оттуда в None. Из-за этого распроданный вагон
+            # выглядел вагоном с неизвестным числом мест.
+            raw_places = group.get("TotalPlaceQuantity")
+            if raw_places is None:
+                raw_places = group.get("PlaceQuantity")
+            places = _as_int(raw_places)
+            if places is not None and places <= 0:
                 continue
             service_classes = group.get("ServiceClasses") or group.get("ServiceClass") or []
             if isinstance(service_classes, str):
@@ -449,9 +472,7 @@ def _parse_trains(payload: Any) -> list[dict[str, Any]]:
                     "car_type": car_type,
                     "car_type_name": group.get("CarTypeName") or group.get("CarType"),
                     "price": price,
-                    "available_places": _as_int(
-                        group.get("TotalPlaceQuantity") or group.get("PlaceQuantity")
-                    ),
+                    "available_places": places,
                     "service_classes": [str(item) for item in service_classes if item],
                 }
             )
