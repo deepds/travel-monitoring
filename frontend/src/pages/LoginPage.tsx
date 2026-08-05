@@ -34,7 +34,7 @@ export default function LoginPage() {
     >
       <Card style={{ width: 420, boxShadow: '0 2px 16px rgba(0,0,0,0.08)' }}>
         <Title level={4} style={{ marginTop: 0 }}>
-          Мониторинг стоимости путешествий
+          Мониторинг Туризм.рф
         </Title>
         <Paragraph type="secondary" style={{ marginBottom: 24 }}>
           Аналитическая платформа наблюдения за рынком транспорта и проживания.
