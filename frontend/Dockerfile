@@ -11,6 +11,10 @@ RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
+# Каталог public копируется целиком: Vite переносит его в dist как есть.
+# Без него шрифты отсутствовали в образе, а nginx отдавал на /fonts/*.ttf
+# фолбэк index.html — браузер молча откатывался на системный шрифт.
+COPY public ./public
 
 RUN npm run build
 
