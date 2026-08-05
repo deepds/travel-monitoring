@@ -486,6 +486,29 @@ def refresh_monitoring_scenario(
     }
 
 
+@shared_task(name="tco.monitoring.maintain_observation_grid", bind=True)
+def maintain_observation_grid(
+    self, horizon_days: int | None = None  # noqa: ANN001
+) -> dict[str, Any]:
+    """Поддерживает скользящую сетку наблюдений витрины.
+
+    Досоздает сценарии на дальнем конце горизонта и снимает с наблюдения
+    прошедшие даты. Идемпотентна: повторный запуск в тот же день ничего не
+    меняет, сценарий опознается по отпечатку.
+    """
+    from tco.services.observation_grid import HORIZON_DAYS, maintain_grid
+
+    with session_scope() as session:
+        report = maintain_grid(session, horizon_days=horizon_days or HORIZON_DAYS)
+
+    payload = report.as_dict()
+    if report.profile_missing:
+        logger.error("Сетка не построена: профиль витрины отсутствует", **payload)
+    else:
+        logger.info("Сетка наблюдений обновлена", **payload)
+    return payload
+
+
 @shared_task(name="tco.monitoring.refresh_all_monitoring_scenarios", bind=True)
 def refresh_all_monitoring_scenarios(
     self, profile_id: str | None = None, force_refresh: bool = False, limit: int | None = None  # noqa: ANN001

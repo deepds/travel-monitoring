@@ -65,6 +65,13 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="5", hour=_snapshot_hours),
         "options": {"queue": "compute", "expires": _snapshot_expires},
     },
+    # Раньше планового сбора: сетка должна быть достроена к моменту, когда
+    # начнется наблюдение, иначе самая дальняя дата горизонта пропустит сутки.
+    "observation-grid-daily": {
+        "task": "tco.monitoring.maintain_observation_grid",
+        "schedule": crontab(minute="30", hour="0"),
+        "options": {"queue": "maintenance"},
+    },
     "source-health-check-hourly": {
         "task": "tco.source.health_check_all_sources",
         "schedule": crontab(minute="20"),
