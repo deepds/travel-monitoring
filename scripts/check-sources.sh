@@ -86,39 +86,60 @@ if [ "$LIVE" = true ]; then
   $COMPOSE exec -T api python -m tco.cli run-monitoring --limit 1 --force >/dev/null 2>&1 \
     || { echo "Не удалось поставить задачу — жив ли worker? $COMPOSE ps worker" >&2; exit 1; }
 
+  # Ждем появления нового снимка, а не завершения задачи: пакетная задача
+  # остается RUNNING, пока идет весь пакет, и по ее статусу пришлось бы ждать
+  # намного дольше, чем нужно для ответа на вопрос «источники отвечают?».
+  #
+  # Ориентир — created_at снимка, реальное время записи. У результатов
+  # источников в collected_at лежит метка окна наблюдения, округленная до часа,
+  # и сравнивать ее с моментом запуска проверки бессмысленно.
   printf 'Задача поставлена, идет обращение к источникам '
-  done_at=""
-  for _ in $(seq 1 40); do
-    pending=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c "
-      select count(*) from jobs
-      where created_at >= '$START'
-        and status not in ('SUCCESS','FAILED','CANCELLED','TIMED_OUT','PARTIAL')" 2>/dev/null || echo 1)
-    started=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c "
-      select count(*) from jobs where created_at >= '$START'" 2>/dev/null || echo 0)
-    if [ "${started:-0}" -gt 0 ] && [ "${pending:-1}" -eq 0 ]; then done_at=ok; break; fi
+  answered=0
+  for _ in $(seq 1 60); do
+    answered=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c "
+      select count(*) from snapshot_source_results r
+      join market_snapshots s on s.id = r.market_snapshot_id
+      where s.created_at >= '$START'" 2>/dev/null || echo 0)
+    [ "${answered:-0}" -gt 0 ] && break
     printf '.'
     sleep 3
   done
   echo
 
-  if [ -z "$done_at" ]; then
-    echo "Сбор не завершился за 2 минуты. Смотрите: $COMPOSE logs --tail 50 worker"
+  if [ "${answered:-0}" -eq 0 ]; then
+    # Пустой результат сам по себе не означает, что источники недоступны:
+    # задача могла до них не дойти, если очередь занята или воркер стоит.
+    QUEUED=$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c "
+      select count(*) from jobs
+      where created_at >= '$START'
+        and status not in ('SUCCESS','FAILED','CANCELLED','TIMED_OUT','PARTIAL')" 2>/dev/null || echo 0)
+    if [ "${QUEUED:-0}" -gt 0 ]; then
+      echo "За 3 минуты источники не ответили, задача еще выполняется — очередь занята."
+      echo "Повторите позже или смотрите: $COMPOSE logs --tail 50 worker"
+    else
+      echo "Источники не ответили, и задача не выполняется."
+      echo "Смотрите: $COMPOSE ps worker && $COMPOSE logs --tail 50 worker"
+    fi
     fail=1
   fi
 
-  echo
-  echo "Что вернули источники:"
-  $COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -F' | ' -c "
-    select r.source_code, r.outcome,
-           'предложений: ' || r.valid_offer_count,
-           'задержка: ' || coalesce(r.latency_ms::text, '-') || ' мс',
-           coalesce(left(r.error_message, 60), '')
-    from snapshot_source_results r
-    where r.collected_at >= '$START'
-    order by r.source_code" 2>/dev/null || echo "(нет данных)"
-  [ -z "$($COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -c \
-      "select 1 from snapshot_source_results where collected_at >= '$START' limit 1" 2>/dev/null)" ] \
-    && echo "(источники не ответили ни разу — смотрите логи воркера)" && fail=1
+  if [ "${answered:-0}" -gt 0 ]; then
+    echo
+    # Показываются все ответы с начала проверки, а не только по пробному
+    # сценарию: если в этот момент идет плановый сбор, его ответы попадут сюда
+    # же — и на вопрос «источники отвечают» они отвечают ровно так же.
+    echo "Что вернули источники с начала проверки:"
+    $COMPOSE exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -t -A -F' | ' -c "
+      select r.source_code, r.outcome, 'обращений: ' || count(*),
+             'предложений: ' || sum(r.valid_offer_count),
+             'задержка: ' || coalesce(round(avg(r.latency_ms))::text, '-') || ' мс',
+             coalesce(left(min(r.error_message), 60), '')
+      from snapshot_source_results r
+      join market_snapshots s on s.id = r.market_snapshot_id
+      where s.created_at >= '$START'
+      group by r.source_code, r.outcome
+      order by r.source_code, count(*) desc" 2>/dev/null
+  fi
 else
   echo "=== 3/3 Пробный сбор пропущен ==="
   echo "Чтобы проверить сбор вживую: bash scripts/check-sources.sh --live"
