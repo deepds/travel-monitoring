@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api } from '@/api/client';
 import { AsyncBlock, PageTitle, RunStatusTag } from '@/components/common';
 import { ScenarioDeleteModal } from '@/components/ScenarioDialogs';
-import { TOTAL_COLOR, applyChartTheme, rangeSeries } from '@/utils/charts';
+import { TOTAL_COLOR, applyChartTheme } from '@/utils/charts';
 import { useTheme } from '@/theme/ThemeContext';
 import { useAuth } from '@/auth/AuthContext';
 import { useAsync } from '@/hooks/useAsync';
@@ -59,10 +59,6 @@ export default function ScenarioDetailPage() {
           color: TOTAL_COLOR,
           data: [...points].reverse().map((p) => p.total_estimated_cost),
         },
-        ...rangeSeries(
-          [...points].reverse().map((p) => p.total_min),
-          [...points].reverse().map((p) => p.total_max),
-        ),
         {
           name: 'Транспорт',
           type: 'line',

@@ -7,7 +7,7 @@ import type { DirectionRow } from '@/api/types';
 import {
   AsyncBlock, ChangeIndicator, LabelWithHint, MetricCard, MetricDisclaimer, PageTitle, PriceRange,
 } from '@/components/common';
-import { TOTAL_COLOR, applyChartTheme, rangeSeries } from '@/utils/charts';
+import { TOTAL_COLOR, applyChartTheme } from '@/utils/charts';
 import { useTheme } from '@/theme/ThemeContext';
 import { DEFAULT_FILTERS, DashboardFilterBar, toQuery } from '@/components/DashboardFilters';
 import type { Filters } from '@/components/DashboardFilters';
@@ -43,16 +43,17 @@ export default function DashboardPage() {
   const { resolved } = useTheme();
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [trendDays, setTrendDays] = useState(30);
-  const [granularity, setGranularity] = useState<'DAY' | 'SNAPSHOT'>('DAY');
   const query = useMemo(() => toQuery(filters), [filters]);
   const deps = [JSON.stringify(query)];
 
   const overview = useAsync(() => api.overview(query), deps);
   const directions = useAsync(() => api.directions(query), deps);
   const structure = useAsync(() => api.costStructure(query), deps);
+  // Гранулярность всегда дневная: разбивка по снимкам показывала несколько
+  // точек внутри одних суток и читалась как скачки цены, которых не было.
   const trends = useAsync(
-    () => api.trends({ ...query, days: trendDays, granularity }),
-    [...deps, trendDays, granularity],
+    () => api.trends({ ...query, days: trendDays, granularity: 'DAY' }),
+    [...deps, trendDays],
   );
 
   const data = overview.data;
@@ -61,8 +62,6 @@ export default function DashboardPage() {
   const trendOption = useMemo(
     () => ({
       tooltip: { trigger: 'axis' },
-      // Границы размаха скрыты из легенды: это не самостоятельные ряды, а
-      // коридор вокруг итога, и включать их отдельно нечего.
       legend: { data: ['Итого', 'Транспорт', 'Проживание'], bottom: 0 },
       grid: { left: 60, right: 24, top: 24, bottom: 48 },
       xAxis: { type: 'category', data: points.map((p) => p.period ?? p.date ?? p.key) },
@@ -76,10 +75,6 @@ export default function DashboardPage() {
           lineStyle: { width: 3 },
           color: TOTAL_COLOR,
         },
-        ...rangeSeries(
-          points.map((p) => p.min),
-          points.map((p) => p.max),
-        ),
         { name: 'Транспорт', type: 'line', smooth: true, data: points.map((p) => p.median_transport) },
         { name: 'Проживание', type: 'line', smooth: true, data: points.map((p) => p.median_hotel) },
       ],
@@ -258,27 +253,16 @@ export default function DashboardPage() {
             title="Динамика стоимости"
             size="small"
             extra={
-              <span style={{ display: 'flex', gap: 8 }}>
-                <Segmented
-                  size="small"
-                  value={granularity}
-                  onChange={(value) => setGranularity(value as 'DAY' | 'SNAPSHOT')}
-                  options={[
-                    { label: 'По дням', value: 'DAY' },
-                    { label: 'По снимкам', value: 'SNAPSHOT' },
-                  ]}
-                />
-                <Segmented
-                  size="small"
-                  value={trendDays}
-                  onChange={(value) => setTrendDays(value as number)}
-                  options={[
-                    { label: '7 дн', value: 7 },
-                    { label: '30 дн', value: 30 },
-                    { label: '90 дн', value: 90 },
-                  ]}
-                />
-              </span>
+              <Segmented
+                size="small"
+                value={trendDays}
+                onChange={(value) => setTrendDays(value as number)}
+                options={[
+                  { label: '7 дн', value: 7 },
+                  { label: '30 дн', value: 30 },
+                  { label: '90 дн', value: 90 },
+                ]}
+              />
             }
           >
             <AsyncBlock

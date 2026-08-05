@@ -39,6 +39,21 @@
   --tco-error: #b91c1c;
   --tco-info: #1d4ed8;
 
+  /*
+   * Плашки (Tag). Заливка сплошная, текст белый: бледная подложка Ant Design с
+   * цветным текстом давала около 2:1 и читалась хуже всего именно там, где
+   * плашка несет статус. Контраст текста к заливке — не ниже 5:1.
+   */
+  --tco-tag-fg: #ffffff;
+  --tco-tag-neutral: #4a5568; /* 7.5:1 */
+  --tco-tag-accent: #005a9e; /* 7.1:1 */
+  --tco-tag-info: #1d4ed8; /* 6.7:1 */
+  --tco-tag-success: #047857; /* 5.5:1 */
+  --tco-tag-warning: #b45309; /* 5.0:1 */
+  --tco-tag-error: #b91c1c; /* 6.5:1 */
+  --tco-tag-purple: #6d28d9; /* 7.1:1 */
+  --tco-tag-warm: #b94d00; /* 5.1:1 */
+
   /* Тени */
   --tco-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.08);
   --tco-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.12);
@@ -81,6 +96,20 @@
   --tco-warning: #f59e0b;
   --tco-error: #ef4444;
   --tco-info: #3b82f6;
+
+  /*
+   * Плашки на темном фоне. Оттенки чуть светлее светлотемных, чтобы заливка
+   * отделялась от карточки, но текст остается белым и не ниже 5:1.
+   */
+  --tco-tag-fg: #ffffff;
+  --tco-tag-neutral: #4a5a7a; /* 6.9:1 */
+  --tco-tag-accent: #0a6fb5; /* 5.3:1 */
+  --tco-tag-info: #2557c7; /* 6.4:1 */
+  --tco-tag-success: #0a7d5c; /* 5.1:1 */
+  --tco-tag-warning: #a85a08; /* 5.1:1 */
+  --tco-tag-error: #b93636; /* 5.8:1 */
+  --tco-tag-purple: #6d3ddb; /* 6.3:1 */
+  --tco-tag-warm: #b05500; /* 5.1:1 */
 
   --tco-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
   --tco-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.4);

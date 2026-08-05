@@ -16,7 +16,7 @@ import type { Premium, SourceGapRow, SpreadRow } from '@/api/types';
 import { AsyncBlock } from '@/components/common';
 import { useAsync } from '@/hooks/useAsync';
 import { useTheme } from '@/theme/ThemeContext';
-import { applyChartTheme } from '@/utils/charts';
+import { applyChartTheme, chartTheme } from '@/utils/charts';
 import {
   TRANSPORT_LABEL, dateOnly, money, num, signedPercent, sourceLabel,
 } from '@/utils/format';
@@ -36,6 +36,13 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
   const { resolved } = useTheme();
   const data = useAsync(() => api.departureDates(query), deps(query));
   const points = data.data?.points ?? [];
+
+  /**
+   * Дороже и дешевле типичного различаются теплым и холодным цветом общей
+   * палитры, а не красным и зеленым: те читаются как «плохо» и «хорошо», хотя
+   * здесь это просто положение относительно медианы.
+   */
+  const [cheaper, pricier] = chartTheme(resolved).palette;
 
   const option = useMemo(
     () => ({
@@ -67,7 +74,7 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
           type: 'bar',
           data: points.map((p) => ({
             value: p.price_index,
-            itemStyle: { color: p.price_index >= 1 ? '#cf1322' : '#3f8600' },
+            itemStyle: { color: p.price_index >= 1 ? pricier : cheaper },
           })),
           markLine: {
             silent: true,
@@ -77,7 +84,7 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
         },
       ],
     }),
-    [points],
+    [points, cheaper, pricier],
   );
 
   return (
@@ -92,7 +99,7 @@ export function DepartureDatesCard({ query }: { query?: Query }) {
           <>
             <Text type="secondary">
               Отношение к типичной стоимости своего направления по {data.data?.comparable_routes}{' '}
-              сопоставимым маршрутам.
+              сопоставимым маршрутам. Теплый цвет — дороже типичной, холодный — дешевле.
             </Text>
             <ReactECharts
               option={applyChartTheme(option, resolved)}
