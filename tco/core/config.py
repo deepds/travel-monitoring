@@ -136,6 +136,12 @@ class Settings(BaseSettings):
     snapshot_interval_hours: int = 1
     monitoring_batch_concurrency: int = 8
 
+    #: Методика для сценариев, за которыми не закреплен профиль. Задана кодом,
+    #: а не «последним активированным»: активных методик может быть несколько
+    #: (у витрины своя), и при выборе по времени активации появление новой
+    #: молча меняло бы правила расчета всему остальному каталогу.
+    default_profile_code: str = "baseline"
+
     #: Retention (DELTA §2.4). ``0`` — бессрочно.
     retention_raw_days: int = 45
     retention_html_days: int = 45

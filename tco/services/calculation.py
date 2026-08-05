@@ -124,22 +124,40 @@ def engine_scenario(scenario: TravelScenario) -> EngineScenario:
 
 
 def active_profile(session: Session, scenario: TravelScenario | None = None) -> CalculationProfile:
-    """Профиль сценария, иначе — единственный активный профиль по умолчанию."""
+    """Профиль сценария, иначе — методика по умолчанию."""
     from tco.core.enums import ProfileStatus
 
     if scenario is not None and scenario.calculation_profile_id:
         profile = session.get(CalculationProfile, scenario.calculation_profile_id)
         if profile is not None and profile.is_active:
             return profile
+        # Закрепление профиля — явное решение, и подменять его молча нельзя:
+        # расчет запишет чужую методику, а по самим цифрам это не заметно. На
+        # стенде так и вышло — сетка витрины считалась базовой методикой, и
+        # правила по классу вагона и возвратности просто не применялись.
+        if profile is not None:
+            logger.warning(
+                "Профиль сценария не действует, расчет пойдет по методике по умолчанию",
+                scenario_profile=profile.label,
+                scenario_profile_status=profile.status,
+            )
 
-    profile = session.scalars(
+    active = session.scalars(
         select(CalculationProfile)
         .where(CalculationProfile.status == ProfileStatus.ACTIVE.value)
         .order_by(CalculationProfile.activated_at.desc())
-    ).first()
-    if profile is None:
+    ).all()
+    if not active:
         raise NotFoundError("Нет активного профиля расчета")
-    return profile
+
+    # Методика по умолчанию выбирается по коду, а не по времени активации:
+    # активных методик несколько — у витрины своя, — и появление новой не
+    # должно менять правила расчета всему остальному каталогу.
+    default_code = get_settings().default_profile_code
+    for profile in active:
+        if profile.code == default_code:
+            return profile
+    return active[0]
 
 
 def resolve_horizon(session: Session, *, allow_synthetic: bool = False) -> HorizonInfo:

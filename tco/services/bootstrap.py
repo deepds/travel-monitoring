@@ -111,13 +111,24 @@ def seed_profiles(session: Session, directory: Path | None = None) -> int:
             .order_by(CalculationProfile.version_seq.desc())
             .limit(1)
         )
+        # Каталог вправе объявить методику сразу действующей. Это нужно
+        # профилям, которые обслуживают отдельный контур и закрепляются за
+        # сценариями: закрепление работает только на активный профиль, а
+        # неактивный молча подменялся бы профилем по умолчанию.
+        declared = str(payload.get("status") or ProfileStatus.DRAFT.value).upper()
+        status = (
+            ProfileStatus.ACTIVE.value
+            if declared == ProfileStatus.ACTIVE.value
+            else ProfileStatus.DRAFT.value
+        )
         profile = CalculationProfile(
             code=code,
             name=payload["name"],
             description=(payload.get("description") or "").strip() or None,
             version=version,
             version_seq=int(max_seq or 0) + 1,
-            status=ProfileStatus.DRAFT.value,
+            status=status,
+            activated_at=utcnow() if status == ProfileStatus.ACTIVE.value else None,
             rules=rules.model_dump(mode="json"),
             created_by="bootstrap",
         )
@@ -126,20 +137,28 @@ def seed_profiles(session: Session, directory: Path | None = None) -> int:
 
     session.flush()
 
-    # Активируем базовый профиль, если ни один не активен.
-    has_active = session.scalars(
-        select(CalculationProfile).where(CalculationProfile.status == ProfileStatus.ACTIVE.value)
+    # Активируем методику по умолчанию, если ее действующей версии нет.
+    # Проверяется активность именно этого кода, а не наличие любого активного
+    # профиля: у витрины своя действующая методика, и по общему признаку
+    # «хоть что-то активно» базовая осталась бы в черновиках, а весь каталог
+    # направлений молча считался бы правилами витрины.
+    default_code = get_settings().default_profile_code
+    has_active_default = session.scalars(
+        select(CalculationProfile).where(
+            CalculationProfile.code == default_code,
+            CalculationProfile.status == ProfileStatus.ACTIVE.value,
+        )
     ).first()
-    if has_active is None:
-        baseline = session.scalars(
+    if has_active_default is None:
+        fallback = session.scalars(
             select(CalculationProfile)
-            .where(CalculationProfile.code == "baseline")
+            .where(CalculationProfile.code == default_code)
             .order_by(CalculationProfile.version_seq.desc())
         ).first()
-        if baseline is not None:
-            baseline.status = ProfileStatus.ACTIVE.value
-            baseline.activated_at = utcnow()
-            logger.info("Базовый профиль активирован", profile=baseline.label)
+        if fallback is not None:
+            fallback.status = ProfileStatus.ACTIVE.value
+            fallback.activated_at = utcnow()
+            logger.info("Методика по умолчанию активирована", profile=fallback.label)
 
     logger.info("Профили расчета синхронизированы", created=created)
     return created
