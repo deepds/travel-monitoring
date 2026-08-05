@@ -42,7 +42,7 @@ from tco.core.utils import utcnow
 from tco.db.models.profile import CalculationProfile
 from tco.db.models.scenario import TravelScenario
 from tco.services.scenario_lifecycle import soft_delete_scenario
-from tco.services.scenarios import ScenarioDraft, create_scenario
+from tco.services.scenarios import DAILY_CADENCE_TAG, ScenarioDraft, create_scenario
 
 #: Пять ключевых городов витрины.
 SHOWCASE_CITIES: tuple[str, ...] = ("MOW", "LED", "AER", "KUF", "KZN")
@@ -118,7 +118,7 @@ def _transport_drafts(origin: str, destination: str, departure: date) -> list[Sc
         "meal_type": MealType.ANY,
         "cancellation_filter": CancellationFilter.ANY,
         "scenario_type": ScenarioType.MONITORING,
-        "tags": [GRID_TAG, "showcase-transport"],
+        "tags": [GRID_TAG, DAILY_CADENCE_TAG, "showcase-transport"],
     }
     return [
         ScenarioDraft(
@@ -153,7 +153,7 @@ def _accommodation_drafts(city: str, check_in: date) -> list[ScenarioDraft]:
             meal_type=MealType.ANY,
             cancellation_filter=CancellationFilter.ANY,
             scenario_type=ScenarioType.MONITORING,
-            tags=[GRID_TAG, "showcase-accommodation"],
+            tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-accommodation"],
         )
         for stars in SHOWCASE_STARS
     ]
