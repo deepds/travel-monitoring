@@ -5,7 +5,6 @@ import { api } from '@/api/client';
 import type { SourceBreakdownRow } from '@/api/types';
 import { AsyncBlock, MetricDisclaimer, PageTitle } from '@/components/common';
 import { OffersTable } from '@/components/OffersTable';
-import { TripBuilder } from '@/components/TripBuilder';
 import { RailComparisonTable } from '@/components/RailComparisonTable';
 import { useAsync } from '@/hooks/useAsync';
 import {
@@ -141,11 +140,6 @@ export default function RunDetailPage() {
         <Card size="small">
           <Tabs
             items={[
-              {
-                key: 'trip',
-                label: 'Собрать поездку',
-                children: <TripBuilder runId={id} />,
-              },
               {
                 key: 'offers',
                 label: 'Предложения',
