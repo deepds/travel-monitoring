@@ -39,8 +39,10 @@ from sqlalchemy import delete, func, select, update  # noqa: E402
 from tco.db.models.job import Job  # noqa: E402
 from tco.db.models.offer import Offer  # noqa: E402
 from tco.db.models.raw import HtmlSnapshot, RawResponse  # noqa: E402
+from tco.db.models.reference import ResultCacheEntry  # noqa: E402
 from tco.db.models.run import ScenarioRun  # noqa: E402
 from tco.db.models.snapshot import MarketSnapshot  # noqa: E402
+from tco.db.models.source import SourceMetric  # noqa: E402
 from tco.db.session import session_scope  # noqa: E402
 from tco.storage.raw_store import get_raw_store  # noqa: E402
 
@@ -61,6 +63,11 @@ def main() -> int:
         type=parse_day,
         required=True,
         help="Удалить наблюдения строго раньше этой даты",
+    )
+    parser.add_argument(
+        "--with-source-metrics",
+        action="store_true",
+        help="Снести и метрики источников (историю Source Confidence)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Только показать объем")
     parser.add_argument(
@@ -146,7 +153,24 @@ def main() -> int:
         session.execute(delete(ScenarioRun).where(ScenarioRun.observation_date < args.before))
         session.execute(delete(MarketSnapshot).where(MarketSnapshot.id.in_(snapshot_ids)))
 
+        # 4. Кэш результатов ссылается на расчеты по идентификатору. Оставить его
+        #    нельзя: API отдал бы из кэша ссылку на удаленный расчет.
+        cache_rows = session.scalar(select(func.count(ResultCacheEntry.id))) or 0
+        session.execute(delete(ResultCacheEntry))
+
+        # 5. Метрики источников по умолчанию переживают удаление: они описывают
+        #    поведение источника, а не маршрут, и их потеря искажает историю
+        #    Source Confidence. Сносятся только по явному требованию — когда
+        #    накоплены в том числе за время, когда сбор работал неверно.
+        metric_rows = 0
+        if args.with_source_metrics:
+            metric_rows = session.scalar(select(func.count(SourceMetric.id))) or 0
+            session.execute(delete(SourceMetric))
+
         print(f"Удалено снимков: {len(snapshot_ids)}, расчетов: {runs}, предложений: {offers}")
+        print(f"Очищено записей кэша результатов: {cache_rows}")
+        if args.with_source_metrics:
+            print(f"Удалено метрик источников: {metric_rows}")
         if storage_errors:
             print(f"Не удалось удалить файлов сырых ответов: {storage_errors}")
 
