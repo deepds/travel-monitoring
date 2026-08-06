@@ -149,13 +149,21 @@ def main() -> int:
         # 2. Артефакты, предложения и расчеты. Предложения и итоги по источникам
         #    ушли бы и каскадом снимка, но удаляются явно — чтобы объем операции
         #    был виден в отчете, а не только в размере базы.
+        #
+        #    Порядок важен: предложения удаляются ПЕРВЫМИ, до сырых ответов.
+        #    У ``offers.raw_response_id`` внешний ключ с ``ON DELETE SET NULL``,
+        #    и удаление каждого сырого ответа заставляет СУБД искать ссылки на
+        #    него в таблице предложений. Пока предложения на месте, эта проверка
+        #    идет по самой большой таблице базы: на стенде удаление 6 234
+        #    ответов при 358 801 предложении не продвинулось за двадцать минут.
+        #    Когда предложения уже удалены, проверять нечего.
+        session.execute(delete(Offer).where(Offer.market_snapshot_id.in_(snapshot_filter)))
         session.execute(
             delete(HtmlSnapshot).where(HtmlSnapshot.market_snapshot_id.in_(snapshot_filter))
         )
         session.execute(
             delete(RawResponse).where(RawResponse.market_snapshot_id.in_(snapshot_filter))
         )
-        session.execute(delete(Offer).where(Offer.market_snapshot_id.in_(snapshot_filter)))
 
         # 3. Журнал задач переживает удаление — обнуляется только ссылка.
         session.execute(

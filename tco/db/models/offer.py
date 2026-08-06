@@ -40,6 +40,14 @@ class Offer(UUIDPrimaryKeyMixin, Base):
         Index("ix_offers_fingerprint", "market_snapshot_id", "technical_fingerprint"),
         Index("ix_offers_equivalence", "equivalence_group_id"),
         Index("ix_offers_collected", "collected_at"),
+        # Индексы под внешние ключи с ``ON DELETE SET NULL``. PostgreSQL сам их
+        # не создает, а проверять ключ ему приходится при каждом удалении
+        # родительской строки: без индекса это полный просмотр таблицы
+        # предложений на каждый удаляемый сырой ответ. На стенде удаление
+        # 6 234 ответов при 358 801 предложении не продвинулось за двадцать
+        # минут — два с лишним миллиарда операций сравнения.
+        Index("ix_offers_raw_response", "raw_response_id"),
+        Index("ix_offers_html_snapshot", "html_snapshot_id"),
     )
 
     market_snapshot_id: Mapped[uuid.UUID] = mapped_column(
