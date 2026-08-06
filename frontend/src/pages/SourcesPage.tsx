@@ -174,16 +174,24 @@ export default function SourcesPage() {
               {
                 title: 'Категория',
                 dataIndex: 'category',
+                width: 230,
+                // Показываются типы предложений, а не компонента: компонента из
+                // них выводится, а вместе они противоречили друг другу. У
+                // источника проживания плашка выходила дважды — «Проживание»
+                // приходит и компонентой, и типом. У Туту рядом стояли
+                // «Транспорт» и «Проживание», хотя он отдает и то, и другое.
                 render: (value: string, row) => (
-                  <span>
-                    <Tag>{labelOf(COMPONENT_LABEL, value)}</Tag>
-                    <br />
-                    {row.offer_types.map((t) => (
-                      <Tag key={t} style={{ fontSize: 11 }}>
-                        {labelOf(OFFER_TYPE_LABEL, t)}
-                      </Tag>
-                    ))}
-                  </span>
+                  <Space size={[4, 4]} wrap>
+                    {row.offer_types.length ? (
+                      row.offer_types.map((t) => (
+                        <Tag key={t} style={{ marginInlineEnd: 0 }}>
+                          {labelOf(OFFER_TYPE_LABEL, t)}
+                        </Tag>
+                      ))
+                    ) : (
+                      <Tag style={{ marginInlineEnd: 0 }}>{labelOf(COMPONENT_LABEL, value)}</Tag>
+                    )}
+                  </Space>
                 ),
               },
               {
