@@ -40,7 +40,6 @@ from tco.db.models.profile import CalculationProfile
 from tco.services.observation_grid import (
     CANONICAL_NIGHTS,
     GRID_PROFILE_CODE,
-    GRID_TAG,
     HORIZON_DAYS,
     SHOWCASE_ADULTS,
     SHOWCASE_CITIES,
@@ -90,17 +89,19 @@ def _grid_scenarios(
 ) -> list[TravelScenario]:
     """Сценарии сетки в диапазоне дат отправления.
 
-    Отбор по тегу идет в Python: ``JSONB.contains`` работает только в
-    PostgreSQL, а на SQLite молча не находит ничего.
+    Принадлежность к сетке — поле, а не тег: по тегу отбор пришлось бы делать
+    в Python, потому что ``JSONB.contains`` работает только в PostgreSQL.
     """
-    rows = session.scalars(
-        select(TravelScenario)
-        .where(TravelScenario.deleted_at.is_(None))
-        .where(TravelScenario.departure_date >= departure_from)
-        .where(TravelScenario.departure_date <= departure_to)
-        .order_by(TravelScenario.departure_date)
-    ).all()
-    return [item for item in rows if GRID_TAG in (item.tags or [])]
+    return list(
+        session.scalars(
+            select(TravelScenario)
+            .where(TravelScenario.deleted_at.is_(None))
+            .where(TravelScenario.is_showcase_grid.is_(True))
+            .where(TravelScenario.departure_date >= departure_from)
+            .where(TravelScenario.departure_date <= departure_to)
+            .order_by(TravelScenario.departure_date)
+        ).all()
+    )
 
 
 def _on_demand_observations(

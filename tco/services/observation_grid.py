@@ -196,7 +196,11 @@ def maintain_grid(
         return report
 
     for draft in grid_drafts(today=today, horizon_days=horizon_days):
-        _, created = create_scenario(session, draft, profile=profile, created_by="grid")
+        scenario, created = create_scenario(session, draft, profile=profile, created_by="grid")
+        # Признак ставится и существующим: сетка опознается по отпечатку, и
+        # сценарий, заведенный до появления поля, иначе остался бы неотмеченным
+        # и продолжил бы попадать в агрегаты рынка.
+        scenario.is_showcase_grid = True
         if created:
             report.created += 1
         else:
@@ -207,23 +211,15 @@ def maintain_grid(
 
 
 def retire_expired(session: Session, *, today: date | None = None) -> int:
-    """Снимает с наблюдения сценарии сетки, дата отправления которых прошла.
-
-    По тегу отбор идет в Python, а не запросом: ``JSONB.contains`` есть только
-    в PostgreSQL, а на SQLite он молча не находит ничего — сетка копилась бы
-    без единой ошибки в логе. Выборка мала: это только прошедшие даты.
-    """
+    """Снимает с наблюдения сценарии сетки, дата отправления которых прошла."""
     today = today or utcnow().date()
     past = session.scalars(
         select(TravelScenario)
         .where(TravelScenario.deleted_at.is_(None))
+        .where(TravelScenario.is_showcase_grid.is_(True))
         .where(TravelScenario.departure_date < today)
     ).all()
 
-    retired = 0
     for scenario in past:
-        if GRID_TAG not in (scenario.tags or []):
-            continue
         soft_delete_scenario(scenario)
-        retired += 1
-    return retired
+    return len(past)

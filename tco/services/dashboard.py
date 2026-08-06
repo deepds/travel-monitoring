@@ -63,7 +63,15 @@ class DashboardFilters:
 
 def _apply_filters(stmt: Select, filters: DashboardFilters) -> Select:
     stmt = stmt.join(TravelScenario, ScenarioRun.scenario_id == TravelScenario.id)
-    conditions = [TravelScenario.deleted_at.is_(None)]
+    # Сетка витрины из наблюдения рынка исключена. Она заведена ради другой
+    # задачи — показать туристу варианты на конкретные даты — и устроена
+    # иначе: односоставные сценарии, один человек, скользящий месяц вперед.
+    # В общей выборке ее объем перевешивает каталог (1650 сценариев против
+    # 108), и наполнение сетки читалось на графике как обвал рынка.
+    conditions = [
+        TravelScenario.deleted_at.is_(None),
+        TravelScenario.is_showcase_grid.is_(False),
+    ]
 
     if filters.origin_city_code:
         origin = select(City.id).where(City.code == filters.origin_city_code).scalar_subquery()

@@ -35,6 +35,7 @@ class TravelScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_scenarios_active_type", "is_active", "scenario_type"),
         Index("ix_scenarios_route", "origin_city_id", "destination_city_id"),
         Index("ix_scenarios_departure", "departure_date"),
+        Index("ix_scenarios_showcase_grid", "is_showcase_grid"),
     )
 
     code: Mapped[str] = mapped_column(String(96), nullable=False)
@@ -72,6 +73,14 @@ class TravelScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     calculation_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("calculation_profiles.id")
     )
+
+    #: Сценарий заведен скользящей сеткой витрины, а не каталогом наблюдения.
+    #:
+    #: Поле, а не тег: по тегу нельзя отобрать в SQL переносимо, а сетка должна
+    #: отсекаться на стороне СУБД — иначе она попадает в агрегаты рынка, где ее
+    #: односоставные расчеты обваливают медиану. В отпечаток не входит:
+    #: принадлежность к сетке не меняет наблюдаемую поездку.
+    is_showcase_grid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     active_from: Mapped[date | None] = mapped_column(Date)
     active_until: Mapped[date | None] = mapped_column(Date)
