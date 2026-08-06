@@ -655,15 +655,19 @@ def transport_curve(
         ]
 
     observed = _observations(session, scenarios, observation_date=observation_date)
-    is_one_way = not fallback_to_round_trip
-    # У ЖД цена плеча лежит у предложения своим полем и точнее итога расчета:
-    # расчет хранит стоимость наблюдения целиком, а нам нужна одна поездка.
+    # У ЖД цена плеча лежит у предложения своим полем, поэтому кривая там про
+    # поездку в одну сторону всегда — и при односторонних наблюдениях, и при
+    # круговых, из которых плечо достается тем же полем. У авиа так нельзя:
+    # круговой тариф неделим, и пока односторонних наблюдений нет, кривая
+    # честно показывает поездку туда-обратно.
+    is_rail = transport_type == TransportType.RAIL
+    is_one_way = is_rail or not fallback_to_round_trip
     one_way = (
         _one_way_prices(
             session,
             [item.run.market_snapshot_id for item in observed if item.run.market_snapshot_id],
         )
-        if transport_type == TransportType.RAIL
+        if is_rail
         else {}
     )
 
@@ -678,6 +682,10 @@ def transport_curve(
         pair = one_way.get(run.market_snapshot_id)
         if pair is not None:
             median, minimum = pair
+        elif is_rail:
+            # Кривая ЖД обещает цену плеча. Итог расчета круговой, и подставить
+            # его сюда значило бы удвоить цифру молча — точка пропускается.
+            continue
         else:
             median = _money(run.transport_median)
             minimum = _money(run.transport_min)
