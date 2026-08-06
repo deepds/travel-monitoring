@@ -1,10 +1,17 @@
-"""Снятие с наблюдения сценариев вне пяти городов витрины.
+"""Снятие каталога наблюдения рынка с ежечасного сбора.
 
 Платформа решала несколько задач сразу: наблюдение рынка по восьми городам,
 произвольные сценарии поездок, витрина по пяти городам. Осталась последняя.
-Каталог из 163 сценариев по восьми городам продолжал собираться ежечасно и
-занимал около трех тысяч обращений в сутки — ровно тот запас, который нужен
-пагинации и однодневным броням.
+Каталог из 163 сценариев продолжал собираться ежечасно и занимал около трех
+тысяч обращений в сутки — ровно тот запас, который нужен пагинации и
+однодневным броням.
+
+Снимается весь каталог, а не только маршруты за пределами пятерки. Витрина
+строится исключительно на скользящей сетке: каталожный сценарий даже по
+маршруту Москва — Сочи наблюдает другую поездку — двое взрослых, своя
+длительность, проживание в том же сценарии — и в витрину не попадает ни одним
+числом. Ключ ``--outside-showcase-only`` оставляет каталожные маршруты внутри
+пятерки, если наблюдение рынка по ним решат сохранить.
 
 Операция мягкая и обратимая:
 
@@ -49,6 +56,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Снятие каталога вне витрины с наблюдения")
     parser.add_argument("--dry-run", action="store_true", help="Только показать объем")
     parser.add_argument("--restore", action="store_true", help="Вернуть снятое в наблюдение")
+    parser.add_argument(
+        "--outside-showcase-only",
+        action="store_true",
+        help="Снять только маршруты, у которых хотя бы один конец вне пятерки",
+    )
     parser.add_argument("--yes", action="store_true", help="Подтверждение операции")
     args = parser.parse_args()
 
@@ -70,23 +82,31 @@ def main() -> int:
                     select(City.id).where(City.code.in_(SHOWCASE_CITIES))
                 ).all()
             )
-            targets = [
-                item
-                for item in session.scalars(
-                    select(TravelScenario)
-                    .where(TravelScenario.scenario_type == ScenarioType.MONITORING.value)
-                    .where(TravelScenario.is_active.is_(True))
-                    .where(TravelScenario.deleted_at.is_(None))
-                    .where(TravelScenario.is_showcase_grid.is_(False))
-                ).all()
-                # Маршрут остается под наблюдением, только если оба его конца —
-                # города витрины. Один конец снаружи означает, что наблюдение
-                # ведется ради задачи, которую заказчик снял.
-                if not (
-                    item.origin_city_id in showcase_ids
-                    and item.destination_city_id in showcase_ids
-                )
-            ]
+            catalog = session.scalars(
+                select(TravelScenario)
+                .where(TravelScenario.scenario_type == ScenarioType.MONITORING.value)
+                .where(TravelScenario.is_active.is_(True))
+                .where(TravelScenario.deleted_at.is_(None))
+                .where(TravelScenario.is_showcase_grid.is_(False))
+            ).all()
+            # Снимается весь каталог наблюдения рынка, а не только маршруты за
+            # пределами пятерки. Витрина строится исключительно на сетке:
+            # каталожный сценарий даже по маршруту Москва — Сочи наблюдает
+            # другую поездку (двое взрослых, своя длительность, проживание в
+            # том же сценарии) и в витрину не попадает ни одним числом.
+            # Наблюдение рынка — снятая задача целиком, а не ее часть.
+            targets = (
+                [
+                    item
+                    for item in catalog
+                    if not (
+                        item.origin_city_id in showcase_ids
+                        and item.destination_city_id in showcase_ids
+                    )
+                ]
+                if args.outside_showcase_only
+                else list(catalog)
+            )
             action = "снять с наблюдения"
 
         print(f"Сценариев {action}: {len(targets)}")
