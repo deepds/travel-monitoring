@@ -109,7 +109,10 @@ def main() -> int:
         failed_only: set = set()
         if args.redo_failed:
             latest = (
-                select(ScenarioRun.market_snapshot_id, func.max(ScenarioRun.started_at))
+                select(
+                    ScenarioRun.market_snapshot_id.label("snapshot_id"),
+                    func.max(ScenarioRun.started_at).label("last_started"),
+                )
                 .where(ScenarioRun.market_snapshot_id.is_not(None))
                 .group_by(ScenarioRun.market_snapshot_id)
                 .subquery()
@@ -120,8 +123,8 @@ def main() -> int:
                     select(ScenarioRun.market_snapshot_id)
                     .join(
                         latest,
-                        (ScenarioRun.market_snapshot_id == latest.c.market_snapshot_id)
-                        & (ScenarioRun.started_at == latest.c.max_1),
+                        (ScenarioRun.market_snapshot_id == latest.c.snapshot_id)
+                        & (ScenarioRun.started_at == latest.c.last_started),
                     )
                     .where(ScenarioRun.status.in_(("FAILED", "NO_DATA")))
                 ).all()
