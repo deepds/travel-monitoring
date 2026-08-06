@@ -200,31 +200,41 @@ class RzdConnector(BaseConnector):
             outbound_payload, outbound_request = self._search_direction(
                 http, origin_code, destination_code, query.departure_date
             )
-            inbound_payload, inbound_request = self._search_direction(
-                http, destination_code, origin_code, query.return_date
-            )
-
             outbound = _parse_trains(outbound_payload)
-            inbound = _parse_trains(inbound_payload)
-            offers = self._combine(outbound, inbound, query)
+            raw_artifacts = [
+                RawArtifact(
+                    payload=outbound_payload,
+                    endpoint=f"{self.base_url}{self.PRICING_PATH}:outbound",
+                    request_params=outbound_request,
+                )
+            ]
+
+            if query.is_one_way:
+                # Поездка в одну сторону: обратное направление не запрашиваем.
+                # Это ровно половина обращений к источнику — из них и состоит
+                # экономия, за счет которой наблюдаются оба вида цены.
+                inbound = []
+                offers = [self._build_one_way_offer(item, query) for item in outbound]
+            else:
+                inbound_payload, inbound_request = self._search_direction(
+                    http, destination_code, origin_code, query.return_date
+                )
+                inbound = _parse_trains(inbound_payload)
+                offers = self._combine(outbound, inbound, query)
+                raw_artifacts.append(
+                    RawArtifact(
+                        payload=inbound_payload,
+                        endpoint=f"{self.base_url}{self.PRICING_PATH}:inbound",
+                        request_params=inbound_request,
+                    )
+                )
 
             return ConnectorResult(
                 source_code=self.code,
                 offer_type=OfferType.RAIL,
                 outcome=ConnectorOutcome.SUCCESS if offers else ConnectorOutcome.EMPTY,
                 offers=offers,
-                raw_artifacts=[
-                    RawArtifact(
-                        payload=outbound_payload,
-                        endpoint=f"{self.base_url}{self.PRICING_PATH}:outbound",
-                        request_params=outbound_request,
-                    ),
-                    RawArtifact(
-                        payload=inbound_payload,
-                        endpoint=f"{self.base_url}{self.PRICING_PATH}:inbound",
-                        request_params=inbound_request,
-                    ),
-                ],
+                raw_artifacts=raw_artifacts,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 connector_version=self.version,
                 diagnostics={
@@ -232,6 +242,7 @@ class RzdConnector(BaseConnector):
                     "destination_station": destination_code,
                     "outbound_variants": len(outbound),
                     "inbound_variants": len(inbound),
+                    "one_way": query.is_one_way,
                 },
             )
 
@@ -263,6 +274,41 @@ class RzdConnector(BaseConnector):
                         return offers
                     offers.append(self._build_offer(out, back, car_type, query))
         return offers
+
+    def _build_one_way_offer(
+        self, out: dict[str, Any], query: TransportQuery
+    ) -> ProviderRailOffer:
+        """Предложение на одно плечо: поезд «туда», обратного нет.
+
+        Комбинировать нечего, поэтому каждый поезд дает ровно одно
+        предложение — в отличие от кругового сбора, где плечи перемножаются.
+        """
+        price = to_decimal(out.get("price"))
+        car_type = str(out.get("car_type") or "")
+        return ProviderRailOffer(
+            source_offer_id=f"{out.get('train_number')}-{car_type}-oneway",
+            currency="RUB",
+            total_price=price,
+            price_basis="PER_PASSENGER",
+            price_per_place_outbound=price,
+            origin_station_code=out.get("origin_code"),
+            destination_station_code=out.get("destination_code"),
+            origin_station_name=out.get("origin_name"),
+            destination_station_name=out.get("destination_name"),
+            origin_city_name=query.origin_city_name,
+            destination_city_name=query.destination_city_name,
+            outbound_train_number=out.get("train_number"),
+            outbound_duration_minutes=out.get("duration_minutes"),
+            outbound_segments=[_segment_from_train(out)],
+            carriers=list(out.get("carriers") or []),
+            car_type_raw=car_type,
+            service_classes=list(out.get("service_classes") or []),
+            available_places_outbound=out.get("available_places"),
+            is_two_storey=bool(out.get("is_two_storey")),
+            passenger_count=query.traveler_count,
+            is_round_trip=False,
+            source_payload={"outbound_car_type_name": out.get("car_type_name")},
+        )
 
     def _build_offer(
         self,

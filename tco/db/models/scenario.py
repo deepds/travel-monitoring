@@ -113,6 +113,21 @@ class TravelScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         return AccommodationType(self.accommodation_type) if self.accommodation_type else None
 
     @property
+    def is_one_way(self) -> bool:
+        """Наблюдается поездка в одну сторону, а не туда-обратно.
+
+        Выражается совпадением дат: обратного плеча нет. Отдельным полем это
+        не выражается намеренно — оно должно было бы войти в отпечаток, а
+        совпадение дат уже в нем есть и означает ровно это.
+
+        Одностороннее наблюдение нужно произвольным датам: круговой тариф
+        наблюдается только на каноническую длительность, и на других датах
+        возврата цифры нет вовсе, а сумма двух плеч дает ее для любого
+        интервала.
+        """
+        return self.return_date == self.departure_date
+
+    @property
     def observes_transport(self) -> bool:
         return self.transport_type is not None
 

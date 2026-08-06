@@ -16,6 +16,7 @@ from tco.core.enums import StarsFilter, TransportType
 from tco.db.models.profile import CalculationProfile
 from tco.db.models.scenario import TravelScenario
 from tco.services.observation_grid import (
+    AVIA_ONE_WAY_TAG,
     AVIA_TAG,
     CANONICAL_NIGHTS,
     CONTROL_STAY_OFFSETS,
@@ -35,11 +36,10 @@ from tco.services.observation_grid import (
 
 TODAY = date(2026, 9, 1)
 
-#: 20 направленных маршрутов на два вида транспорта плюс пять городов на три
-#: категории звездности.
-PER_DAY = len(SHOWCASE_CITIES) * (len(SHOWCASE_CITIES) - 1) * 2 + len(SHOWCASE_CITIES) * len(
-    SHOWCASE_STARS
-)
+#: 20 направленных маршрутов: ЖД плечом, авиа двумя рядами (круговой и плечо),
+#: плюс пять городов на три категории звездности.
+ROUTES = len(SHOWCASE_CITIES) * (len(SHOWCASE_CITIES) - 1)
+PER_DAY = ROUTES * 3 + len(SHOWCASE_CITIES) * len(SHOWCASE_STARS)
 
 #: Контрольные пятидневные брони на три даты — они вне суточного состава.
 CONTROL_TOTAL = len(SHOWCASE_CITIES) * len(SHOWCASE_STARS) * len(CONTROL_STAY_OFFSETS)
@@ -49,9 +49,9 @@ class TestGridComposition:
     def test_size_matches_horizon(self):
         drafts = grid_drafts(today=TODAY, horizon_days=30)
 
-        assert PER_DAY == 55
-        # 1650 суточных наблюдений плюс 45 контрольных пятидневных броней.
-        assert len(drafts) == 55 * 30 + CONTROL_TOTAL == 1695
+        assert PER_DAY == 75
+        # 2250 суточных наблюдений плюс 45 контрольных пятидневных броней.
+        assert len(drafts) == 75 * 30 + CONTROL_TOTAL == 2295
 
     def test_horizon_starts_tomorrow_and_has_no_gaps(self):
         drafts = grid_drafts(today=TODAY, horizon_days=7)
@@ -64,7 +64,8 @@ class TestGridComposition:
     def test_transport_scenarios_observe_only_transport(self):
         drafts = [d for d in grid_drafts(today=TODAY, horizon_days=1) if d.transport_type]
 
-        assert len(drafts) == 40
+        # 20 маршрутов: ЖД плечом, авиа круговым тарифом и плечом.
+        assert len(drafts) == 60
         assert all(draft.accommodation_type is None for draft in drafts)
         assert {d.transport_type for d in drafts} == {TransportType.RAIL, TransportType.AVIA}
 
@@ -88,10 +89,16 @@ class TestGridComposition:
         for draft in grid_drafts(today=TODAY, horizon_days=1):
             assert draft.adults == SHOWCASE_ADULTS
 
-    def test_transport_keeps_the_canonical_stay(self):
-        """Проезд сравнивает направления между собой — длительность одна."""
-        drafts = [d for d in grid_drafts(today=TODAY, horizon_days=1) if d.transport_type]
+    def test_round_trip_transport_keeps_the_canonical_stay(self):
+        """Круговой тариф наблюдается на одну длительность: направления
+        сравниваются между собой, а не поездки разной длины."""
+        drafts = [
+            d
+            for d in grid_drafts(today=TODAY, horizon_days=1)
+            if d.transport_type and d.return_date != d.departure_date
+        ]
 
+        assert drafts, "круговое наблюдение должно остаться"
         for draft in drafts:
             assert draft.return_date - draft.departure_date == timedelta(days=CANONICAL_NIGHTS)
 
@@ -106,7 +113,7 @@ class TestGridComposition:
         assert {RAIL_TAG, AVIA_TAG, STAY_TAG} <= tagged
         # Каждый сценарий попадает ровно в одно окно, иначе он либо соберется
         # дважды, либо не соберется вовсе.
-        windows = (RAIL_TAG, AVIA_TAG, STAY_TAG, CONTROL_STAY_TAG)
+        windows = (RAIL_TAG, AVIA_TAG, AVIA_ONE_WAY_TAG, STAY_TAG, CONTROL_STAY_TAG)
         for draft in drafts:
             assert sum(tag in draft.tags for tag in windows) == 1
 

@@ -98,11 +98,12 @@ celery_app.conf.beat_schedule = {
     # срабатывания.
     #
     #   00:30  достройка сетки на новый день горизонта      10 мин
-    #   01:00  ЖД                                600 сценариев, 2 ч
-    #   03:30  авиа                               600 сценариев, 2 ч
-    #   06:00  проживание, однодневные            450 сценариев, 1,5 ч
+    #   01:00  ЖД, плечо в одну сторону          600 сценариев, 1,5 ч
+    #   02:30  авиа, круговой тариф              600 сценариев, 2 ч
+    #   04:30  авиа, плечо в одну сторону        600 сценариев, 2 ч
+    #   06:30  проживание, однодневные           450 сценариев, 1,5 ч
     #   08:00  проживание, контрольные пятидневные 45 сценариев, 15 мин
-    #   09:00  досбор дыр                         сколько осталось, 1 ч
+    #   09:00  досбор дыр                        сколько осталось, 1 ч
     #   10:00  сводка качества за сутки
     #
     # К десяти утра все закончено, дальше четырнадцать часов запаса: если ночь
@@ -127,23 +128,36 @@ celery_app.conf.beat_schedule = {
     # Проезд разделен на ЖД и авиа: у них разные инструменты источника и разная
     # длительность обращения (ЖД добирает карту мест на каждый поезд), и общий
     # прогон упирался бы в темп там, где раздельный проходит.
+    #
+    # ЖД наблюдается плечом в одну сторону — вдвое дешевле кругового сбора по
+    # обращениям, поэтому его окно короче прежнего.
     "monitoring-daily-rail": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="0", hour="1"),
         "options": {"queue": "compute", "expires": 2 * 3600},
         "kwargs": {"with_tag": "showcase-rail"},
     },
+    # Авиа наблюдается двумя рядами: круговой тариф отвечает на вопрос «сколько
+    # стоит поездка на эти даты», плечи — «сколько стоит любой другой
+    # интервал». Ряды идут разными окнами: вместе это 1200 сценариев подряд, а
+    # именно залп такого размера открыл размыкатель цепи 6 августа.
     "monitoring-daily-avia": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
-        "schedule": crontab(minute="30", hour="3"),
+        "schedule": crontab(minute="30", hour="2"),
         "options": {"queue": "compute", "expires": 2 * 3600},
         "kwargs": {"with_tag": "showcase-avia"},
+    },
+    "monitoring-daily-avia-one-way": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="30", hour="4"),
+        "options": {"queue": "compute", "expires": 2 * 3600},
+        "kwargs": {"with_tag": "showcase-avia-1w"},
     },
     # Однодневные брони — основной ряд наблюдений проживания: одна точка это
     # одна ночь и один день недели, поэтому недельная волна на графике видна.
     "monitoring-daily-accommodation": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
-        "schedule": crontab(minute="0", hour="6"),
+        "schedule": crontab(minute="30", hour="6"),
         "options": {"queue": "compute", "expires": 2 * 3600},
         "kwargs": {"with_tag": "showcase-stay-1n"},
     },

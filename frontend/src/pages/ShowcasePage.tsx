@@ -503,7 +503,7 @@ export default function ShowcasePage() {
               rowKey="destination_code"
               dataSource={options.data?.items ?? []}
               pagination={false}
-              scroll={{ x: 720 }}
+              scroll={{ x: 900 }}
               columns={[
                 {
                   title: 'Куда',
@@ -523,8 +523,26 @@ export default function ShowcasePage() {
                   ),
                 },
                 {
-                  title: 'Транспорт',
-                  dataIndex: 'transport',
+                  // Круговой тариф — цена реальной покупки, но продается он
+                  // только на конкретную пару дат. Пустая клетка здесь честно
+                  // читается как «так не продают на эти даты».
+                  title: 'Одним билетом',
+                  dataIndex: 'transport_round_trip',
+                  align: 'right',
+                  render: (value: ShowcasePrice | null) =>
+                    value ? (
+                      <PriceCell value={value} onOpen={openRun} />
+                    ) : (
+                      <Tooltip title="Круговой тариф на эти даты не наблюдался: он продается на конкретную пару дат, и наблюдение ведется на длительность в 5 ночей.">
+                        <Text type="secondary">не продают</Text>
+                      </Tooltip>
+                    ),
+                },
+                {
+                  // Два билета складываются на любой интервал — тем и нужны.
+                  // В сумме дороже кругового: разница есть цена гибкости дат.
+                  title: 'Двумя билетами',
+                  dataIndex: 'transport_two_legs',
                   align: 'right',
                   render: (value: ShowcasePrice | null) => (
                     <PriceCell value={value} onOpen={openRun} />
@@ -561,7 +579,9 @@ export default function ShowcasePage() {
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
               «от» — самое дешевое из наблюдавшихся предложений, а не гарантия наличия
               мест по этой цене. Клик по цене открывает разбор: из чего она сложилась и
-              какие предложения в нее вошли.
+              какие предложения в нее вошли. Два билета в сумме дороже кругового тарифа —
+              это цена гибкости дат; если сумма вышла дешевле, дело в выборке, а не в
+              находке.
               {anyEstimated
                 ? ' Проживание на выбранный срок — оценка «цена ночи × число ночей»: человек платит за бронь, а короткие брони отели продают дороже.'
                 : ''}

@@ -720,10 +720,25 @@ export interface ShowcasePrice {
   observed_nights?: number;
 }
 
+/** Плечо поездки: половина маршрута, наблюдавшаяся отдельным сценарием. */
+export interface ShowcaseLeg {
+  direction: 'OUTBOUND' | 'INBOUND';
+  date: string;
+  median: number;
+  min: number | null;
+  run_id: string;
+}
+
 export interface ShowcaseOption {
   destination_code: string;
   destination_name: string;
+  /** Та цена проезда, которая на эти даты существует (см. `transport_basis`). */
   transport: ShowcasePrice | null;
+  /** Круговой тариф: цена реальной покупки, но только на наблюдаемую длительность. */
+  transport_round_trip: ShowcasePrice | null;
+  /** Два билета: складывается на любой интервал, но в сумме дороже кругового. */
+  transport_two_legs: (ShowcasePrice & { legs: ShowcaseLeg[] }) | null;
+  transport_basis: 'ROUND_TRIP' | 'TWO_LEGS' | null;
   accommodation: ShowcasePrice | null;
   /** У итога `min` — сумма минимумов, то есть нижняя граница, а не предложение. */
   total: (ShowcasePrice & { estimated?: boolean }) | null;

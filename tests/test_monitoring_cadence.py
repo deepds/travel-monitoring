@@ -81,7 +81,7 @@ class TestCadenceSplit:
         grid = select_by_tag(daily, with_tag=GRID_TAG)
         legacy = [item for item in daily if GRID_TAG not in (item.tags or [])]
 
-        assert len(grid) == 55
+        assert len(grid) == 75
         # Направления вне пятерки помечены в каталоге; если каталог в тестовой
         # базе засеян, они здесь и окажутся.
         assert all(DAILY_CADENCE_TAG in (item.tags or []) for item in legacy)
@@ -108,6 +108,7 @@ class TestDailyRunIsSplitByComponent:
     WINDOWS = (
         "monitoring-daily-rail",
         "monitoring-daily-avia",
+        "monitoring-daily-avia-one-way",
         "monitoring-daily-accommodation",
         "monitoring-daily-accommodation-control",
     )
@@ -148,6 +149,7 @@ class TestDailyRunIsSplitByComponent:
     def test_split_covers_the_daily_scope_without_overlap(self, scenarios):
         """Ни один суточный сценарий не потерян и ни один не собирается дважды."""
         from tco.services.observation_grid import (
+            AVIA_ONE_WAY_TAG,
             AVIA_TAG,
             CONTROL_STAY_TAG,
             RAIL_TAG,
@@ -157,7 +159,7 @@ class TestDailyRunIsSplitByComponent:
         daily = select_by_tag(scenarios, with_tag=DAILY_CADENCE_TAG)
         by_window = [
             select_by_tag(daily, with_tag=tag)
-            for tag in (RAIL_TAG, AVIA_TAG, STAY_TAG, CONTROL_STAY_TAG)
+            for tag in (RAIL_TAG, AVIA_TAG, AVIA_ONE_WAY_TAG, STAY_TAG, CONTROL_STAY_TAG)
         ]
         covered = [id(item) for group in by_window for item in group]
 

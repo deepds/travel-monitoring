@@ -81,6 +81,14 @@ class NormalizationContext:
     def nights(self) -> int:
         return (self.return_date - self.departure_date).days
 
+    @property
+    def is_one_way(self) -> bool:
+        """Наблюдается поездка в одну сторону: обратного плеча нет.
+
+        Выражается совпадением дат — тем же признаком, что и у сценария.
+        """
+        return self.return_date == self.departure_date
+
 
 @dataclass(slots=True)
 class NormalizedOffer:
@@ -248,9 +256,10 @@ def _normalize_flight(provider: ProviderFlightOffer, context: NormalizationConte
     if not outbound:
         offer.validity_status = ValidityStatus.INVALID_ROUTE.value
         messages.append("Отсутствуют сегменты плеча «туда»")
-    elif not inbound:
+    elif not inbound and not context.is_one_way:
         # Сценарий круговой: одностороннее предложение несопоставимо и
-        # не должно участвовать в агрегации.
+        # не должно участвовать в агрегации. У односторонней поездки, наоборот,
+        # обратного плеча нет по построению — и это не дефект предложения.
         offer.validity_status = ValidityStatus.INVALID_ROUTE.value
         messages.append("Отсутствует плечо «обратно» — предложение несопоставимо со сценарием")
 
@@ -360,7 +369,17 @@ def _normalize_rail(provider: ProviderRailOffer, context: NormalizationContext) 
             f"Класс вагона не поддерживается или не определен: {provider.car_type_raw!r}"
         )
 
-    if not provider.is_round_trip or not (provider.outbound_segments and provider.inbound_segments):
+    # Требование обратного плеча предъявляется только круговому наблюдению.
+    # У односторонней поездки обратного плеча нет по построению, и отсутствие
+    # его — не дефект предложения, а условие задачи: сценарий наблюдает цену
+    # проезда «туда», из которой складывается любой произвольный интервал.
+    if context.is_one_way:
+        if not provider.outbound_segments:
+            offer.validity_status = ValidityStatus.INVALID_ROUTE.value
+            messages.append("Предложение не содержит плеча «туда»")
+    elif not provider.is_round_trip or not (
+        provider.outbound_segments and provider.inbound_segments
+    ):
         offer.validity_status = ValidityStatus.INVALID_ROUTE.value
         messages.append("Предложение не покрывает поездку туда и обратно")
 

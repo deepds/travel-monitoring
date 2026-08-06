@@ -12,13 +12,14 @@
 
 Состав на один день горизонта:
 
-* транспорт — 20 направленных маршрутов между пятью городами, отдельно ЖД и
-  авиа, туда-обратно, без проживания;
+* проезд — 20 направленных маршрутов между пятью городами: ЖД плечом в одну
+  сторону, авиа двумя рядами сразу (круговой тариф на каноническую
+  длительность и плечо в одну сторону), без проживания;
 * проживание — пять городов в трех категориях звездности, **бронь на одну
   ночь**, без транспорта.
 
-Итого 55 сценариев на дату, 1650 на горизонт в 30 дней, плюс 45 контрольных
-пятидневных броней — всего 1695.
+Итого 75 сценариев на дату, 2250 на горизонт в 30 дней, плюс 45 контрольных
+пятидневных броней — всего 2295.
 
 ПОЧЕМУ БРОНЬ НА ОДНУ НОЧЬ, А НЕ НА ПЯТЬ
 
@@ -91,6 +92,9 @@ CONTROL_STAY_OFFSETS: tuple[int, ...] = (7, 15, 26)
 #: 6 августа.
 RAIL_TAG = "showcase-rail"
 AVIA_TAG = "showcase-avia"
+#: Односторонние авиаплечи собираются своим окном: их столько же, сколько
+#: круговых, и вместе они дали бы залп вдвое больше прежнего.
+AVIA_ONE_WAY_TAG = "showcase-avia-1w"
 STAY_TAG = "showcase-stay-1n"
 CONTROL_STAY_TAG = "showcase-stay-5n"
 
@@ -154,12 +158,34 @@ def _accommodation_origin(city: str) -> str:
 
 
 def _transport_drafts(origin: str, destination: str, departure: date) -> list[ScenarioDraft]:
+    """Наблюдения проезда на одну дату отправления.
+
+    ЖЕЛЕЗНАЯ ДОРОГА НАБЛЮДАЕТСЯ ПЛЕЧОМ, А НЕ ПОЕЗДКОЙ ТУДА-ОБРАТНО.
+
+    Цена плеча у ЖД существует: источник отдает ее своим полем, и билет
+    покупается на каждое направление отдельно. Поэтому круговое наблюдение там
+    ничего не добавляло, а стоило вдвое дороже по обращениям — два поиска и до
+    16 запросов карты мест вместо одного набора. Двадцать направленных
+    маршрутов на тридцать дат покрывают любой интервал: он складывается из
+    плеча «туда» на одну дату и плеча «обратно» на другую.
+
+    АВИА НАБЛЮДАЕТСЯ ДВУМЯ РЯДАМИ СРАЗУ.
+
+    Круговой тариф неделим — это одно число за поездку, и разложить его на
+    плечи нельзя, не выдумывая. Но продается он только на конкретную пару дат,
+    поэтому на произвольном интервале его просто нет. Односторонние плечи, в
+    свою очередь, покрывают любой интервал, но стоят в сумме дороже кругового.
+
+    Оба ряда описывают рынок правдиво и отвечают на разные вопросы, поэтому
+    наблюдаются оба: «одним билетом» и «двумя билетами». Разница между ними —
+    цена гибкости дат, и она же служит проверкой: сумма двух билетов дешевле
+    кругового означает дефект выборки, а не находку.
+    """
     ret = departure + timedelta(days=CANONICAL_NIGHTS)
     common = {
         "origin_city_code": origin,
         "destination_city_code": destination,
         "departure_date": departure,
-        "return_date": ret,
         "adults": SHOWCASE_ADULTS,
         "accommodation_type": None,
         "stars": StarsFilter.NOT_APPLICABLE,
@@ -168,18 +194,36 @@ def _transport_drafts(origin: str, destination: str, departure: date) -> list[Sc
         "scenario_type": ScenarioType.MONITORING,
     }
     return [
+        # ЖД: плечо «туда». Совпадение дат означает поездку в одну сторону.
         ScenarioDraft(
+            return_date=departure,
             transport_type=TransportType.RAIL,
             flight_fare_type=None,
             rail_class=RailClass.COMPARTMENT,
             tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-transport", RAIL_TAG],
             **common,
         ),
+        # Авиа: круговой тариф на каноническую длительность.
         ScenarioDraft(
+            return_date=ret,
             transport_type=TransportType.AVIA,
             flight_fare_type=FlightFareType.CHEAPEST,
             rail_class=None,
             tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-transport", AVIA_TAG],
+            **common,
+        ),
+        # Авиа: плечо «туда», из которого складывается любой интервал.
+        ScenarioDraft(
+            return_date=departure,
+            transport_type=TransportType.AVIA,
+            flight_fare_type=FlightFareType.CHEAPEST,
+            rail_class=None,
+            tags=[
+                GRID_TAG,
+                DAILY_CADENCE_TAG,
+                "showcase-transport",
+                AVIA_ONE_WAY_TAG,
+            ],
             **common,
         ),
     ]

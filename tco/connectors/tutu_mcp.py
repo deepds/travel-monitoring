@@ -574,7 +574,12 @@ class TutuMcpConnector(BaseConnector):
                 )
 
             self._set_arg(args, props, "date_forward", query.departure_date)
-            has_return_arg = self._set_arg(args, props, "date_back", query.return_date) is not None
+            # Обратная дата не передается у односторонней поездки: там обратного
+            # плеча нет вовсе, и круговой поиск вернул бы не то, что просили.
+            has_return_arg = (
+                not query.is_one_way
+                and self._set_arg(args, props, "date_back", query.return_date) is not None
+            )
             self._set_arg(args, props, "adults", query.adults)
             children = [age for age in query.children_ages if age >= 2]
             infants = [age for age in query.children_ages if age < 2]
@@ -607,6 +612,27 @@ class TutuMcpConnector(BaseConnector):
                     offers.extend(
                         self._parse_transport(
                             payload, query, offer_type, round_trip=True, mcp=mcp
+                        )
+                    )
+                truncated = bool(page_stats["truncated"])
+            elif query.is_one_way:
+                # Поездка в одну сторону: один поиск, обратного плеча нет.
+                # Вдвое дешевле кругового сбора по обращениям, а у ЖД еще и по
+                # картам мест — их бюджет тратится только на плечо «туда».
+                pages, page_stats = self._fetch_pages(
+                    mcp, tool, args, props, paginate=paginate
+                )
+                for call_args, payload in pages:
+                    raw_artifacts.append(
+                        RawArtifact(
+                            payload=payload,
+                            endpoint=f"{self.endpoint}#{tool}:outbound",
+                            request_params=call_args,
+                        )
+                    )
+                    offers.extend(
+                        self._parse_transport(
+                            payload, query, offer_type, round_trip=False, mcp=mcp
                         )
                     )
                 truncated = bool(page_stats["truncated"])

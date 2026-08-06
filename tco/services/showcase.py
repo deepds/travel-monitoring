@@ -254,6 +254,53 @@ def _price_block(
     }
 
 
+def _two_leg_price(
+    outbound: _Observation | None, inbound: _Observation | None
+) -> dict[str, Any] | None:
+    """Цена поездки двумя билетами: плечо «туда» плюс плечо «обратно».
+
+    Складывается на любой интервал — тем и отличается от кругового тарифа,
+    которого на нештатных датах не существует вовсе. Сумма двух плеч, как
+    правило, дороже кругового: разница и есть цена гибкости дат.
+
+    Требуются оба плеча. Одно плечо — это половина поездки, и показывать ее
+    рядом с полной ценой значило бы сравнивать разное.
+    """
+    if outbound is None or inbound is None:
+        return None
+    parts = [
+        (_money(item.run.transport_median), _money(item.run.transport_min), item.run)
+        for item in (outbound, inbound)
+    ]
+    if any(median is None for median, _, _ in parts):
+        return None
+
+    minimums = [minimum for _, minimum, _ in parts]
+    return {
+        "median": sum(median for median, _, _ in parts),
+        # Сумма минимумов по плечам: нижняя граница, а не наблюдавшаяся пара.
+        "min": sum(minimums) if all(value is not None for value in minimums) else None,
+        "offers": sum(int(run.transport_offer_count or 0) for _, _, run in parts),
+        "sources": max(int(run.transport_source_count or 0) for _, _, run in parts),
+        # Разбор открывается по плечу «туда»: у поездки двумя билетами нет
+        # одного расчета, а показать надо тот, с которого она начинается.
+        "run_id": str(outbound.run.id),
+        "legs": [
+            {
+                "direction": direction,
+                "date": item.scenario.departure_date.isoformat(),
+                "median": median,
+                "min": minimum,
+                "run_id": str(item.run.id),
+            }
+            for direction, item, (median, minimum, _) in (
+                ("OUTBOUND", outbound, parts[0]),
+                ("INBOUND", inbound, parts[1]),
+            )
+        ],
+    }
+
+
 def _stay_per_night(run: ScenarioRun, scenario: TravelScenario) -> tuple[float | None, float | None]:
     """Цена ночи и минимум за ночь по наблюдению проживания.
 
@@ -301,21 +348,45 @@ def options(
     """
     names = _city_names(session)
     nights = (return_date - departure_date).days
-    scenarios = _grid_scenarios(
-        session, departure_from=departure_date, departure_to=departure_date
-    )
+    # Берутся обе даты: на дату отправления лежат плечо «туда» и проживание,
+    # на дату возврата — встречное плечо «обратно», из которого складывается
+    # поездка двумя билетами.
+    scenarios = [
+        item
+        for item in _grid_scenarios(
+            session, departure_from=departure_date, departure_to=return_date
+        )
+        if item.departure_date in (departure_date, return_date)
+    ]
     observed = _observations(session, scenarios, observation_date=observation_date)
 
     transport: dict[str, _Observation] = {}
+    #: Плечо «туда»: маршрут из своего города на дату отправления.
+    outbound_leg: dict[str, _Observation] = {}
+    #: Плечо «обратно»: встречный маршрут на дату возвращения.
+    inbound_leg: dict[str, _Observation] = {}
     accommodation: dict[str, _Observation] = {}
     for item in observed:
         scenario = item.scenario
         if scenario.transport_type == transport_type.value:
-            # Транспорт наблюдается круговым тарифом на каноническую
-            # длительность: на других датах возврата такого наблюдения нет.
-            if scenario.return_date == return_date and scenario.origin_city.code == origin:
-                transport[scenario.destination_city.code] = item
-        elif _is_stay(scenario) and scenario.stars == stars.value:
+            origin_code = scenario.origin_city.code
+            destination_code = scenario.destination_city.code
+            if scenario.is_one_way:
+                if origin_code == origin and scenario.departure_date == departure_date:
+                    outbound_leg[destination_code] = item
+                elif destination_code == origin and scenario.departure_date == return_date:
+                    # Встречный маршрут: обратно едут из города назначения.
+                    inbound_leg[origin_code] = item
+            elif origin_code == origin and scenario.return_date == return_date:
+                # Круговой тариф продается на конкретную пару дат: на другой
+                # длительности такого наблюдения нет вовсе, и подставлять
+                # соседнее значило бы выдать чужую цену за эту поездку.
+                transport[destination_code] = item
+        elif (
+            _is_stay(scenario)
+            and scenario.stars == stars.value
+            and scenario.departure_date == departure_date
+        ):
             # Из двух длительностей берется однодневная: она основной ряд, а
             # пятидневная контрольная и наблюдается лишь на трех датах.
             current = accommodation.get(scenario.destination_city.code)
@@ -354,6 +425,10 @@ def options(
             if transport_run
             else None
         )
+        # Поездка двумя билетами: плечо «туда» плюс встречное плечо «обратно».
+        # Складывается на любой интервал — тем и отличается от кругового
+        # тарифа, которого на нештатных датах просто не существует.
+        legs_price = _two_leg_price(outbound_leg.get(code), inbound_leg.get(code))
 
         stay_price = None
         stay_estimated = False
@@ -377,7 +452,8 @@ def options(
         # Наблюдение сетки в приоритете: разовый расчет дополняет его, а не
         # подменяет. Иначе один пересчет менял бы цифру уже показанного ряда.
         if once is not None:
-            if transport_price is None:
+            if transport_price is None and legs_price is None:
+                # Разовый расчет делается круговым: он про конкретную поездку.
                 transport_price = _price_block(
                     median=once.run.transport_median,
                     minimum=once.run.transport_min,
@@ -399,26 +475,43 @@ def options(
                     stay_price["observed_nights"] = nights
                     from_on_demand = True
 
+        # Итог считается по той цене проезда, которая на эти даты вообще
+        # существует. Круговой тариф точнее — это цена реальной покупки, — но
+        # на нештатной длительности его нет, и тогда поездка складывается из
+        # двух билетов. Что именно взято, видно по ``transport_basis``.
+        chosen_transport = transport_price or legs_price
+        transport_basis = (
+            "ROUND_TRIP" if transport_price else ("TWO_LEGS" if legs_price else None)
+        )
+
         total = None
-        if transport_price and stay_price:
+        if chosen_transport and stay_price:
             total = {
-                "median": transport_price["median"] + stay_price["median"],
+                "median": chosen_transport["median"] + stay_price["median"],
                 # Сумма минимумов — нижняя граница, а не предложение: дешевый
                 # рейс бывает в неудобное время, а дешевый отель к тому моменту
                 # разберут. Подписывать ее следует «не дешевле чем».
                 "min": (
-                    transport_price["min"] + stay_price["min"]
-                    if transport_price["min"] is not None and stay_price["min"] is not None
+                    chosen_transport["min"] + stay_price["min"]
+                    if chosen_transport["min"] is not None and stay_price["min"] is not None
                     else None
                 ),
-                "estimated": stay_estimated,
+                "estimated": stay_estimated or transport_basis == "TWO_LEGS",
             }
 
         items.append(
             {
                 "destination_code": code,
                 "destination_name": names.get(code, code),
-                "transport": transport_price,
+                "transport": chosen_transport,
+                # Обе цены проезда рядом: «одним билетом» и «двумя билетами».
+                # Совпали даты с наблюдаемой длительностью — заполнены обе, и
+                # видна цена гибкости дат; даты произвольные — кругового
+                # тарифа на них не наблюдалось, и клетка пуста, что честно
+                # читается как «так не продают на эти даты».
+                "transport_round_trip": transport_price,
+                "transport_two_legs": legs_price,
+                "transport_basis": transport_basis,
                 "accommodation": stay_price,
                 "total": total,
                 # Разовый расчет — это один снимок по запросу, а не наблюдение
@@ -429,7 +522,7 @@ def options(
                 "missing": [
                     name
                     for name, value in (
-                        ("transport", transport_price),
+                        ("transport", chosen_transport),
                         ("accommodation", stay_price),
                     )
                     if value is None
@@ -538,19 +631,39 @@ def transport_curve(
     horizon = today + timedelta(days=days)
     names = _city_names(session)
 
+    # Кривая строится по одностороннему наблюдению там, где оно есть: у ЖД
+    # плечо наблюдается прямо, у авиа — вторым рядом рядом с круговым.
+    # Круговое наблюдение отвечает на другой вопрос: «сколько стоит поездка на
+    # эти даты», а кривая спрашивает «когда дешевле выехать».
     scenarios = [
         item
         for item in _grid_scenarios(session, departure_from=today, departure_to=horizon)
-        if item.transport_type == transport_type.value and item.origin_city.code == origin
+        if item.transport_type == transport_type.value
+        and item.origin_city.code == origin
+        and item.is_one_way
     ]
+    fallback_to_round_trip = not scenarios
+    if fallback_to_round_trip:
+        # Односторонних наблюдений еще нет — показываем круговые, честно
+        # называя это в ``direction``. Пустой график был бы хуже: он читается
+        # как отсутствие рынка, а не как отсутствие нового ряда наблюдений.
+        scenarios = [
+            item
+            for item in _grid_scenarios(session, departure_from=today, departure_to=horizon)
+            if item.transport_type == transport_type.value
+            and item.origin_city.code == origin
+        ]
+
     observed = _observations(session, scenarios, observation_date=observation_date)
-    is_one_way = transport_type == TransportType.RAIL
+    is_one_way = not fallback_to_round_trip
+    # У ЖД цена плеча лежит у предложения своим полем и точнее итога расчета:
+    # расчет хранит стоимость наблюдения целиком, а нам нужна одна поездка.
     one_way = (
         _one_way_prices(
             session,
             [item.run.market_snapshot_id for item in observed if item.run.market_snapshot_id],
         )
-        if is_one_way
+        if transport_type == TransportType.RAIL
         else {}
     )
 
@@ -562,10 +675,8 @@ def transport_curve(
         if code not in series:
             continue
         run = item.run
-        if is_one_way:
-            pair = one_way.get(run.market_snapshot_id)
-            if pair is None:
-                continue
+        pair = one_way.get(run.market_snapshot_id)
+        if pair is not None:
             median, minimum = pair
         else:
             median = _money(run.transport_median)

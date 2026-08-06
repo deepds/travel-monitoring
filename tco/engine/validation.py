@@ -202,13 +202,24 @@ def validate_scenario(
         )
 
     # --- Даты ----------------------------------------------------------- #
-    if scenario.return_date <= scenario.departure_date:
+    # Совпадение дат означает поездку в одну сторону: обратного плеча нет.
+    # Это допустимо только там, где проживание не наблюдается — бронь на ноль
+    # ночей не существует, и такой сценарий ничего бы не измерил.
+    is_one_way = scenario.return_date == scenario.departure_date
+    if is_one_way and scenario.accommodation_type is not None:
+        result.add_error(
+            "ONE_WAY_WITH_ACCOMMODATION",
+            "Поездка в одну сторону не может наблюдать проживание: "
+            "бронь на ноль ночей не существует",
+            "return_date",
+        )
+    elif scenario.return_date < scenario.departure_date:
         result.add_error(
             "INVALID_DATE_ORDER",
             "Дата окончания поездки должна быть позже даты начала",
             "return_date",
         )
-    else:
+    elif not is_one_way:
         nights = (scenario.return_date - scenario.departure_date).days
         if nights > MAX_NIGHTS:
             result.add_error(
