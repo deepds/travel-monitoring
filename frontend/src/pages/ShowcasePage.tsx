@@ -92,10 +92,10 @@ export default function ShowcasePage() {
   );
 
   const transportCurve = useAsync(
-    () => api.showcaseTransportCurve({ origin }),
-    [origin],
+    () => api.showcaseTransportCurve({ origin, transport_type: transport }),
+    [origin, transport],
   );
-  const stayCurve = useAsync(() => api.showcaseAccommodationCurve({ stars: '3' }), []);
+  const stayCurve = useAsync(() => api.showcaseAccommodationCurve({ stars }), [stars]);
 
   /** Дата отправления задает и дату возвращения: длительность в сетке одна. */
   const onDeparture = (value: Dayjs | null) => {
@@ -119,11 +119,15 @@ export default function ShowcasePage() {
         axisLabel: { interval: Math.max(0, Math.floor(dates.length / 10)), rotate: 45 },
       },
       yAxis: { type: 'value', axisLabel: { formatter: (value: number) => money(value) } },
+      // Разрыв соединяется линией, но сглаживание выключено. Кружок стоит только
+      // на наблюдавшейся дате, поэтому отрезок без кружков читается как «здесь
+      // не наблюдали». Сплайн такого сказать не может: через длинный разрыв он
+      // рисует размашистую дугу, и она выглядит движением цены, которого не было.
       series: series.map((item) => ({
         name: item.destination_name,
         type: 'line',
-        smooth: true,
-        connectNulls: false,
+        smooth: false,
+        connectNulls: true,
         data: dates.map(
           (day) => item.points.find((point) => point.departure_date === day)?.price ?? null,
         ),
@@ -149,14 +153,34 @@ export default function ShowcasePage() {
       series: series.map((item) => ({
         name: item.city_name,
         type: 'line',
-        smooth: true,
-        connectNulls: false,
+        smooth: false,
+        connectNulls: true,
         data: dates.map(
           (day) => item.points.find((point) => point.check_in === day)?.price ?? null,
         ),
       })),
     };
   }, [stayCurve.data]);
+
+  /**
+   * Подпись графика проезда.
+   *
+   * Единица измерения зависит от вида проезда, и об этом надо сказать прямо:
+   * у ЖД источник отдает цену плеча своим полем, поэтому кривая про поездку в
+   * одну сторону, а авиабилет продается круговым тарифом одним числом, и
+   * делить его на плечи значило бы выдумывать.
+   */
+  const curveHint = useMemo(() => {
+    const mode = transport === 'AVIA' ? 'Самолет' : 'Поезд';
+    const direction =
+      transportCurve.data?.direction === 'ROUND_TRIP' ? 'туда-обратно' : 'в одну сторону';
+    return `Как меняется цена в зависимости от того, когда выезжать. ${mode}, ${direction}`;
+  }, [transport, transportCurve.data]);
+
+  const stayHint = useMemo(() => {
+    const label = STARS_OPTIONS.find((item) => item.value === stars)?.label ?? `${stars} звезды`;
+    return `Медиана за ${GRID_NIGHTS} ночей, категория ${label.toLowerCase()}`;
+  }, [stars]);
 
   const emptyOptions = (options.data?.items ?? []).every((item) => item.total === null);
 
@@ -370,9 +394,7 @@ export default function ShowcasePage() {
         )}
       </AsyncBlock>
 
-      <SectionTitle hint="Как меняется цена в зависимости от того, когда выезжать. Поезд, в одну сторону">
-        Цена проезда по датам отправления
-      </SectionTitle>
+      <SectionTitle hint={curveHint}>Цена проезда по датам отправления</SectionTitle>
 
       <Card size="small">
         <AsyncBlock
@@ -390,7 +412,7 @@ export default function ShowcasePage() {
         </AsyncBlock>
       </Card>
 
-      <SectionTitle hint="Медиана за пять ночей, категория 3 звезды">
+      <SectionTitle hint={stayHint}>
         Проживание по датам заезда
       </SectionTitle>
 

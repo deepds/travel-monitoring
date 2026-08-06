@@ -132,3 +132,45 @@ class TestCurves:
         assert {item["city_code"] for item in body["series"]} == set(SHOWCASE_CITIES)
         assert body["nights"] == CANONICAL_NIGHTS
         assert body["stars"] == "3"
+
+
+class TestTransportCurveFollowsTheSelectedMode:
+    """Кривая проезда обязана меняться вместе с переключателем.
+
+    Она была жестко привязана к ЖД: ни эндпоинт, ни фронтенд вида проезда не
+    передавали, и переключение «Поезд / Самолет» меняло таблицу, но не график.
+    """
+
+    def test_rail_curve_is_one_way(self, client, viewer_headers):
+        response = client.get(
+            "/api/v1/showcase/transport-curve",
+            params={"origin": "MOW", "transport_type": "RAIL"},
+            headers=viewer_headers,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["transport_type"] == "RAIL"
+        assert payload["direction"] == "ONE_WAY"
+
+    def test_avia_curve_is_round_trip(self, client, viewer_headers):
+        """У авиабилета цены плеча не существует: тариф круговой и неделимый."""
+        response = client.get(
+            "/api/v1/showcase/transport-curve",
+            params={"origin": "MOW", "transport_type": "AVIA"},
+            headers=viewer_headers,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["transport_type"] == "AVIA"
+        assert payload["direction"] == "ROUND_TRIP"
+
+    def test_mode_is_rail_by_default(self, client, viewer_headers):
+        response = client.get(
+            "/api/v1/showcase/transport-curve",
+            params={"origin": "MOW"},
+            headers=viewer_headers,
+        )
+
+        assert response.json()["transport_type"] == "RAIL"

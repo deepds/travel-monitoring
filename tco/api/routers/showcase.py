@@ -83,10 +83,15 @@ def showcase_transport_curve(
     session: SessionDep,
     _: ViewerDep,
     origin: CityCode,
+    transport_type: Annotated[
+        TransportType, Query(description="Вид проезда")
+    ] = TransportType.RAIL,
     days: Annotated[int, Query(ge=1, le=180, description="Горизонт в днях")] = HORIZON_DAYS,
 ) -> dict[str, Any]:
     _require_showcase_city(origin)
-    payload = service.transport_curve(session, origin=origin, days=days)
+    payload = service.transport_curve(
+        session, origin=origin, transport_type=transport_type, days=days
+    )
     payload["disclaimer"] = METRIC_DISCLAIMER_RU
     return payload
 

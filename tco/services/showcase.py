@@ -345,14 +345,22 @@ def transport_curve(
     session: Session,
     *,
     origin: str,
+    transport_type: TransportType = TransportType.RAIL,
     days: int = HORIZON_DAYS,
     today: date | None = None,
 ) -> dict[str, Any]:
-    """Цена поездки в одну сторону по датам отправления, ЖД.
+    """Цена проезда по датам отправления.
 
     Отвечает на вопрос «сколько стоит выехать сегодня, завтра, через неделю» —
     это глубина бронирования, а не движение цены во времени: вся кривая
     собирается из одного цикла наблюдений.
+
+    Единица измерения зависит от вида проезда, и это не небрежность, а свойство
+    рынка. У ЖД цена плеча приходит от источника своим полем, поэтому кривая
+    показывает поездку в одну сторону. Авиабилет продается круговым тарифом
+    одним числом, разделить его на плечи нельзя — деление было бы выдумкой,
+    поэтому кривая показывает поездку туда-обратно. Интерфейс обязан назвать
+    это: возвращаемое ``direction`` для того и нужно.
     """
     today = today or utcnow().date()
     horizon = today + timedelta(days=days)
@@ -361,12 +369,22 @@ def transport_curve(
     scenarios = [
         item
         for item in _grid_scenarios(session, departure_from=today, departure_to=horizon)
-        if item.transport_type == TransportType.RAIL.value
+        if item.transport_type == transport_type.value
         and item.origin_city.code == origin
     ]
     observed = _observations(session, scenarios)
-    medians = _one_way_medians(
-        session, [item.run.market_snapshot_id for item in observed if item.run.market_snapshot_id]
+    is_one_way = transport_type == TransportType.RAIL
+    medians = (
+        _one_way_medians(
+            session,
+            [item.run.market_snapshot_id for item in observed if item.run.market_snapshot_id],
+        )
+        if is_one_way
+        else {
+            item.run.market_snapshot_id: value
+            for item in observed
+            if (value := _money(item.run.transport_median)) is not None
+        }
     )
 
     series: dict[str, list[dict[str, Any]]] = {
@@ -386,8 +404,8 @@ def transport_curve(
     return {
         "origin_code": origin,
         "origin_name": names.get(origin, origin),
-        "transport_type": TransportType.RAIL.value,
-        "direction": "ONE_WAY",
+        "transport_type": transport_type.value,
+        "direction": "ONE_WAY" if is_one_way else "ROUND_TRIP",
         "travelers": SHOWCASE_ADULTS,
         "horizon_days": days,
         "series": [
