@@ -79,6 +79,18 @@ class SnapshotBuildResult:
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(slots=True)
+class SourceSelection:
+    """Кого спросили и кого не стали.
+
+    Разделение нужно снимку: пропущенный источник должен оставить след, иначе
+    расчет не отличит «не спросили» от «спросили, ответили пусто».
+    """
+
+    pairs: list[tuple[Source, OfferType]] = field(default_factory=list)
+    circuit_open: list[tuple[Source, OfferType]] = field(default_factory=list)
+
+
 def eligible_sources(
     session: Session,
     *,
@@ -88,11 +100,22 @@ def eligible_sources(
     allow_synthetic: bool,
     allowed_codes: Sequence[str] = (),
     excluded_codes: Sequence[str] = (),
-) -> list[tuple[Source, OfferType]]:
-    """Источники, пригодные для сбора по каждому типу предложений."""
+) -> SourceSelection:
+    """Источники, пригодные для сбора по каждому типу предложений.
+
+    Возвращает и пропущенные по размыкателю цепи. Их обязан увидеть снимок:
+    пропуск означает «мы не спросили», а не «источник ответил пусто», и без
+    записи об этом расчет выходит ``NO_DATA``, неотличимым от честного
+    отсутствия предложений. На витрине временная недоступность источника
+    выглядела бы дырой в рынке.
+
+    Остальные причины отсева сюда не попадают намеренно: выключенный,
+    песочный или не поддерживающий тип источник — это постоянная настройка,
+    и запись о нем в каждом снимке была бы шумом.
+    """
     sources = session.scalars(select(Source).order_by(Source.code)).all()
     now = utcnow()
-    result: list[tuple[Source, OfferType]] = []
+    selection = SourceSelection()
 
     for source in sources:
         if not source.is_usable:
@@ -103,19 +126,26 @@ def eligible_sources(
             continue
         if source.code in excluded_codes:
             continue
-        if source.circuit_open_until and source.circuit_open_until > now:
+        if not (source.supports_date(departure_date) and source.supports_date(return_date)):
+            continue
+
+        # Проверка размыкателя после проверок пригодности: пропуск отмечается
+        # только там, где источник иначе был бы опрошен.
+        breaker_open = bool(source.circuit_open_until and source.circuit_open_until > now)
+        if breaker_open:
             logger.info(
                 "Источник пропущен: открыт circuit breaker",
                 source=source.code,
                 until=source.circuit_open_until.isoformat(),
             )
-            continue
-        if not (source.supports_date(departure_date) and source.supports_date(return_date)):
-            continue
         for offer_type in offer_types:
-            if source.supports_offer_type(offer_type.value):
-                result.append((source, offer_type))
-    return result
+            if not source.supports_offer_type(offer_type.value):
+                continue
+            if breaker_open:
+                selection.circuit_open.append((source, offer_type))
+            else:
+                selection.pairs.append((source, offer_type))
+    return selection
 
 
 def build_queries(
@@ -320,6 +350,40 @@ def create_snapshot(
     return SnapshotBuildResult(snapshot=snapshot, created=True)
 
 
+def _upsert_source_result(
+    session: Session,
+    snapshot: MarketSnapshot,
+    source: Source,
+    offer_type: OfferType,
+    fields: dict[str, Any],
+) -> None:
+    """Пишет результат обращения к источнику, обновляя существующий.
+
+    Запись обновляется, а не добавляется: повторный сбор в том же окне иначе
+    падает на уникальном индексе, снимок остается пустой оболочкой, а расчет
+    по нему выходит NO_DATA и перекрывает прежний удачный.
+    """
+    existing = session.scalars(
+        select(SnapshotSourceResult).where(
+            SnapshotSourceResult.market_snapshot_id == snapshot.id,
+            SnapshotSourceResult.source_id == source.id,
+            SnapshotSourceResult.offer_type == offer_type.value,
+        )
+    ).first()
+    if existing is not None:
+        for name, value in fields.items():
+            setattr(existing, name, value)
+        return
+    session.add(
+        SnapshotSourceResult(
+            market_snapshot_id=snapshot.id,
+            source_id=source.id,
+            offer_type=offer_type.value,
+            **fields,
+        )
+    )
+
+
 def collect_into_snapshot(
     session: Session,
     snapshot: MarketSnapshot,
@@ -338,7 +402,7 @@ def collect_into_snapshot(
     settings = settings or get_settings()
     raw_store = raw_store or get_raw_store()
 
-    pairs = eligible_sources(
+    selection = eligible_sources(
         session,
         offer_types=offer_types,
         departure_date=scenario.departure_date,
@@ -353,7 +417,7 @@ def collect_into_snapshot(
             offer_type=offer_type,
             query=build_queries(scenario, source, offer_type),
         )
-        for source, offer_type in pairs
+        for source, offer_type in selection.pairs
     ]
     results = collect_all(
         tasks,
@@ -455,25 +519,7 @@ def collect_into_snapshot(
             "connector_version": result.connector_version,
             "collected_at": snapshot.observed_at,
         }
-        existing_result = session.scalars(
-            select(SnapshotSourceResult).where(
-                SnapshotSourceResult.market_snapshot_id == snapshot.id,
-                SnapshotSourceResult.source_id == task.source.id,
-                SnapshotSourceResult.offer_type == task.offer_type.value,
-            )
-        ).first()
-        if existing_result is not None:
-            for name, value in fields.items():
-                setattr(existing_result, name, value)
-        else:
-            session.add(
-                SnapshotSourceResult(
-                    market_snapshot_id=snapshot.id,
-                    source_id=task.source.id,
-                    offer_type=task.offer_type.value,
-                    **fields,
-                )
-            )
+        _upsert_source_result(session, snapshot, task.source, task.offer_type, fields)
         session.add(
             SourceMetric(
                 source_id=task.source.id,
@@ -508,6 +554,55 @@ def collect_into_snapshot(
                     "message": result.error_message,
                 }
             )
+
+    # Пропущенные по размыкателю записываются наравне с опрошенными. Без этого
+    # снимок выглядит так, будто источника у компоненты нет вовсе: расчет
+    # выходит NO_DATA, и временная недоступность источника становится
+    # неотличима от честного отсутствия предложений. На стенде так пропало
+    # проживание по 395 сценариям из 465 — в логе 767 строк о пропуске, а в
+    # данных ни следа.
+    for source, offer_type in selection.circuit_open:
+        until = source.circuit_open_until
+        _upsert_source_result(
+            session,
+            snapshot,
+            source,
+            offer_type,
+            {
+                "source_code": source.code,
+                "source_name": source.name,
+                "is_synthetic": source.is_synthetic,
+                "outcome": ConnectorOutcome.CIRCUIT_OPEN.value,
+                "latency_ms": 0,
+                "attempts": 0,
+                "raw_offer_count": 0,
+                "normalized_offer_count": 0,
+                "valid_offer_count": 0,
+                "invalid_offer_count": 0,
+                "unclassified_offer_count": 0,
+                "duplicate_offer_count": 0,
+                "required_field_completeness": 0.0,
+                "error_code": "CIRCUIT_OPEN",
+                "error_message": (
+                    "Источник не опрашивался: открыт размыкатель цепи"
+                    + (f" до {until.isoformat()}" if until else "")
+                ),
+                "connector_version": "",
+                "collected_at": snapshot.observed_at,
+            },
+        )
+        if source.code not in source_codes:
+            source_codes.append(source.code)
+            source_ids.append(str(source.id))
+        errors.append(
+            {
+                "source": source.code,
+                "offer_type": offer_type.value,
+                "outcome": ConnectorOutcome.CIRCUIT_OPEN.value,
+                "error_code": "CIRCUIT_OPEN",
+                "message": "Источник не опрашивался: открыт размыкатель цепи",
+            }
+        )
 
     snapshot.source_ids = source_ids
     snapshot.source_codes = source_codes

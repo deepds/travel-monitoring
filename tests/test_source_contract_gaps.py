@@ -210,3 +210,57 @@ class TestMealConfirmedByQuery:
         from tco.connectors.tutu_mcp import _meal_text
 
         assert _meal_text({"breakfast_included": False}, "BREAKFAST") == "NO_MEALS"
+
+
+class TestCircuitOpenLeavesATrace:
+    """Пропуск по размыкателю цепи должен быть виден в данных, а не только в логе.
+
+    Пропуск означает «мы не спросили», а не «источник ответил пусто». Без записи
+    об этом расчет выходит NO_DATA, неотличимым от честного отсутствия
+    предложений: на стенде так пропало проживание по 395 сценариям из 465 —
+    767 строк в логе и ни следа в данных.
+    """
+
+    @staticmethod
+    def selection(session, *, open_breaker: bool):
+        from datetime import date, timedelta
+
+        from sqlalchemy import select as sa_select
+
+        from tco.core.enums import OfferType
+        from tco.core.utils import utcnow
+        from tco.db.models.source import Source
+        from tco.services.snapshot_builder import eligible_sources
+
+        source = session.scalars(
+            sa_select(Source).where(Source.code == "tutu_mcp")
+        ).first()
+        assert source is not None, "нужен источник tutu_mcp из bootstrap"
+        source.circuit_open_until = utcnow() + timedelta(hours=1) if open_breaker else None
+        session.flush()
+
+        departure = date.today() + timedelta(days=20)
+        return eligible_sources(
+            session,
+            offer_types=(OfferType.ACCOMMODATION,),
+            departure_date=departure,
+            return_date=departure + timedelta(days=5),
+            allow_synthetic=False,
+        )
+
+    def test_open_breaker_moves_source_to_skipped(self, session):
+        selection = self.selection(session, open_breaker=True)
+
+        skipped = {source.code for source, _ in selection.circuit_open}
+        chosen = {source.code for source, _ in selection.pairs}
+
+        assert "tutu_mcp" in skipped, "пропуск обязан быть отражен, а не проглочен"
+        assert "tutu_mcp" not in chosen
+
+    def test_closed_breaker_keeps_source_in_collection(self, session):
+        selection = self.selection(session, open_breaker=False)
+
+        chosen = {source.code for source, _ in selection.pairs}
+
+        assert "tutu_mcp" in chosen
+        assert not selection.circuit_open
