@@ -104,7 +104,13 @@ class TestDailyRunIsSplitByComponent:
     отдельно, прошел без единого срабатывания размыкателя.
     """
 
-    ACCOMMODATION_TAG = "showcase-accommodation"
+    #: Окна суточного цикла: ЖД, авиа, однодневное проживание, контрольное.
+    WINDOWS = (
+        "monitoring-daily-rail",
+        "monitoring-daily-avia",
+        "monitoring-daily-accommodation",
+        "monitoring-daily-accommodation-control",
+    )
 
     @staticmethod
     def entries():
@@ -112,26 +118,50 @@ class TestDailyRunIsSplitByComponent:
 
         return celery_app.conf.beat_schedule
 
-    def test_transport_and_accommodation_run_at_different_hours(self):
+    def test_every_window_runs_at_its_own_hour(self):
+        """Окна не должны накладываться: залп источник не выдерживает."""
         schedule = self.entries()
-        transport = schedule["monitoring-snapshot-daily"]["schedule"]
-        accommodation = schedule["monitoring-snapshot-daily-accommodation"]["schedule"]
+        hours = [schedule[name]["schedule"].hour for name in self.WINDOWS]
 
-        assert transport.hour != accommodation.hour
+        assert len(set(map(str, hours))) == len(self.WINDOWS)
 
-    def test_daily_transport_run_excludes_accommodation(self):
-        kwargs = self.entries()["monitoring-snapshot-daily"]["kwargs"]
+    def test_windows_select_by_disjoint_tags(self):
+        """Сценарий попадает ровно в одно окно — иначе он либо соберется
+        дважды, либо не соберется вовсе."""
+        schedule = self.entries()
+        tags = [schedule[name]["kwargs"]["with_tag"] for name in self.WINDOWS]
 
-        assert kwargs["without_tag"] == self.ACCOMMODATION_TAG
+        assert len(set(tags)) == len(self.WINDOWS)
+
+    def test_backfill_and_report_close_the_cycle(self):
+        """Досбор идет после всех окон, сводка — после досбора."""
+        schedule = self.entries()
+        last_window = max(
+            int(str(schedule[name]["schedule"].hour).strip("{}").split(",")[0])
+            for name in self.WINDOWS
+        )
+        backfill = int(str(schedule["monitoring-backfill"]["schedule"].hour).strip("{}"))
+        report = int(str(schedule["daily-collection-report"]["schedule"].hour).strip("{}"))
+
+        assert last_window < backfill < report
 
     def test_split_covers_the_daily_scope_without_overlap(self, scenarios):
         """Ни один суточный сценарий не потерян и ни один не собирается дважды."""
-        daily = select_by_tag(scenarios, with_tag=DAILY_CADENCE_TAG)
-        transport = select_by_tag(daily, without_tag=self.ACCOMMODATION_TAG)
-        accommodation = select_by_tag(scenarios, with_tag=self.ACCOMMODATION_TAG)
+        from tco.services.observation_grid import (
+            AVIA_TAG,
+            CONTROL_STAY_TAG,
+            RAIL_TAG,
+            STAY_TAG,
+        )
 
-        assert len(transport) + len(accommodation) == len(daily)
-        assert not {id(item) for item in transport} & {id(item) for item in accommodation}
+        daily = select_by_tag(scenarios, with_tag=DAILY_CADENCE_TAG)
+        by_window = [
+            select_by_tag(daily, with_tag=tag)
+            for tag in (RAIL_TAG, AVIA_TAG, STAY_TAG, CONTROL_STAY_TAG)
+        ]
+        covered = [id(item) for group in by_window for item in group]
+
+        assert len(covered) == len(set(covered)), "сценарий попал в два окна"
 
 
 class TestCollectionTasksAreBounded:
@@ -174,3 +204,121 @@ class TestCollectionTasksAreBounded:
         источнике шел полчаса на сценарий.
         """
         assert not [key for key in self.annotations() if key.endswith(".*")]
+
+
+class TestBackfillSelection:
+    """Что именно добирается после ночного прогона.
+
+    Досбор — штатный шаг расписания: ночью сценарий теряется по причинам,
+    которые к утру уже прошли (таймаут источника, открытый размыкатель,
+    перезапуск воркера посреди прогона). Раньше такая дыра оставалась до
+    следующих суток и на витрине выглядела отсутствием рынка.
+
+    Важна и обратная сторона: пустой ответ источника добирать не нужно —
+    «предложений нет» это ответ о рынке, а не сбой. Иначе каждую ночь
+    тратились бы обращения на направления вроде Самара — Казань, где
+    сообщения не существует.
+    """
+
+    OBSERVATION_DATE = date(2026, 9, 2)
+
+    @staticmethod
+    def _scenario(session, suffix: str):
+        import uuid as _uuid
+        from datetime import timedelta
+
+        from tco.db.models.reference import City
+
+        cities = session.scalars(select(City).limit(2)).all()
+        scenario = TravelScenario(
+            code=f"TEST-BACKFILL-{suffix}",
+            name="Проверка отбора для досбора",
+            origin_city_id=cities[0].id,
+            destination_city_id=cities[1].id,
+            departure_date=TODAY,
+            return_date=TODAY + timedelta(days=5),
+            nights=5,
+            adults=1,
+            transport_type="RAIL",
+            fingerprint=f"test-backfill-{suffix}-{_uuid.uuid4().hex[:6]}",
+        )
+        session.add(scenario)
+        session.flush()
+        return scenario
+
+    @classmethod
+    def _snapshot(cls, session, scenario, *, outcome: str | None):
+        import uuid as _uuid
+
+        from tco.core.utils import utcnow
+        from tco.db.models.snapshot import MarketSnapshot, SnapshotSourceResult
+        from tco.db.models.source import Source
+
+        moment = utcnow()
+        snapshot = MarketSnapshot(
+            scenario_id=scenario.id,
+            scenario_fingerprint=scenario.fingerprint,
+            snapshot_type="SCHEDULED",
+            requested_at=moment,
+            completed_at=moment,
+            observed_at=moment,
+            observation_date=cls.OBSERVATION_DATE,
+            status="COMPLETE",
+            normalization_version="1.0.0",
+            idempotency_key=f"test-backfill-{_uuid.uuid4().hex}",
+            created_at=moment,
+        )
+        session.add(snapshot)
+        session.flush()
+
+        if outcome is not None:
+            source = session.scalars(select(Source).limit(1)).first()
+            session.add(
+                SnapshotSourceResult(
+                    market_snapshot_id=snapshot.id,
+                    source_id=source.id,
+                    source_code=source.code,
+                    source_name=source.name,
+                    offer_type="RAIL",
+                    outcome=outcome,
+                    collected_at=moment,
+                    fetched_at=moment,
+                )
+            )
+            session.flush()
+        return snapshot
+
+    def _select(self, session, scenarios):
+        from tco.services.snapshot_builder import scenarios_needing_backfill
+
+        return scenarios_needing_backfill(
+            session, scenarios, observation_date=self.OBSERVATION_DATE
+        )
+
+    def test_scenario_without_any_snapshot_is_taken(self, session):
+        """Прогон до сценария не дошел — добираем."""
+        scenario = self._scenario(session, "missing")
+
+        assert self._select(session, [scenario]) == [scenario]
+
+    def test_successful_snapshot_is_left_alone(self, session):
+        """Собралось успешно — второй раз не спрашиваем."""
+        scenario = self._scenario(session, "success")
+        self._snapshot(session, scenario, outcome="SUCCESS")
+
+        assert self._select(session, [scenario]) == []
+
+    def test_empty_answer_is_not_a_failure(self, session):
+        """Источник ответил «предложений нет» — это ответ о рынке, а не сбой."""
+        scenario = self._scenario(session, "empty")
+        self._snapshot(session, scenario, outcome="EMPTY")
+
+        assert self._select(session, [scenario]) == []
+
+    @pytest.mark.parametrize("outcome", ["TIMEOUT", "CIRCUIT_OPEN", "TRANSPORT_ERROR"])
+    def test_source_failure_is_retried(self, session, outcome):
+        """Отказ источника к утру обычно проходит — пробуем еще раз."""
+        scenario = self._scenario(session, f"fail-{outcome.lower()}")
+        self._snapshot(session, scenario, outcome=outcome)
+
+        assert self._select(session, [scenario]) == [scenario]

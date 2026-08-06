@@ -6,7 +6,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from celery import group, shared_task
+from celery import shared_task
 from sqlalchemy import select
 
 from tco.core.config import get_settings
@@ -288,75 +288,6 @@ def watch_collection_progress(stale_minutes: int = 15) -> dict[str, Any]:
             "Перезапуск пула не помог — ждем перезапуска контейнера", **payload
         )
     return payload
-
-
-@shared_task(name="tco.monitoring.backfill_missing_observations", bind=True)
-def backfill_missing_observations(
-    self,  # noqa: ANN001
-    lookback_days: int = 0,
-    limit: int | None = None,
-) -> dict[str, Any]:
-    """Досбор дыр: повторяет сценарии, оставшиеся сегодня без наблюдения.
-
-    Штатный шаг суточного цикла, а не аварийная мера. Часть сценариев
-    неизбежно выпадает: источник ответил таймаутом, размыкатель цепи был
-    разомкнут, воркер перезапустился на середине. К моменту досбора размыкатель
-    остывает (900 секунд по умолчанию), и повтор обычно проходит.
-
-    Дырой считается сценарий сетки без успешного снимка за сегодня. Снимок с
-    предложениями, но неудачным расчетом, дырой не считается: пересчитать его
-    можно и без обращения к источникам.
-    """
-    from tco.core.enums import ScenarioType, SnapshotStatus
-    from tco.db.models.scenario import TravelScenario
-    from tco.db.models.snapshot import MarketSnapshot
-    from tco.tasks.pipeline import refresh_monitoring_scenario
-
-    today = utcnow().date() - timedelta(days=max(0, lookback_days))
-
-    with session_scope() as session:
-        collected = select(MarketSnapshot.scenario_id).where(
-            MarketSnapshot.observation_date >= today,
-            MarketSnapshot.status.in_(
-                [SnapshotStatus.COMPLETE.value, SnapshotStatus.PARTIAL.value]
-            ),
-        )
-        missing = session.scalars(
-            select(TravelScenario)
-            .where(TravelScenario.scenario_type == ScenarioType.MONITORING.value)
-            .where(TravelScenario.is_active.is_(True))
-            .where(TravelScenario.deleted_at.is_(None))
-            .where(TravelScenario.is_showcase_grid.is_(True))
-            .where(TravelScenario.id.not_in(collected))
-            .order_by(TravelScenario.departure_date, TravelScenario.code)
-        ).all()
-        scenario_ids = [str(item.id) for item in missing]
-
-    if limit:
-        scenario_ids = scenario_ids[:limit]
-    if not scenario_ids:
-        logger.info("Досбор не потребовался: дыр нет", date=today.isoformat())
-        return {"missing": 0, "dispatched": 0, "date": today.isoformat()}
-
-    # Принудительный сбор: снимок за это окно уже мог быть заведен неудачной
-    # попыткой, и без ``force_refresh`` повтор вернул бы SKIPPED_IDEMPOTENT.
-    dispatched = group(
-        refresh_monitoring_scenario.s(scenario_id, None, True, None)
-        for scenario_id in scenario_ids
-    ).apply_async()
-
-    logger.info(
-        "Досбор дыр запущен",
-        date=today.isoformat(),
-        scenarios=len(scenario_ids),
-        group_id=str(dispatched.id),
-    )
-    return {
-        "missing": len(scenario_ids),
-        "dispatched": len(scenario_ids),
-        "date": today.isoformat(),
-        "group_id": str(dispatched.id),
-    }
 
 
 @shared_task(name="tco.metrics.daily_collection_report")
