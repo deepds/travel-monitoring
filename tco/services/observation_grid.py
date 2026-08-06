@@ -81,6 +81,8 @@ class GridReport:
     created: int = 0
     existing: int = 0
     retired: int = 0
+    #: Сколько сценариев переведено на действующую версию методики витрины.
+    reprofiled: int = 0
     horizon_until: date | None = None
     profile_missing: bool = False
 
@@ -89,6 +91,7 @@ class GridReport:
             "created": self.created,
             "existing": self.existing,
             "retired": self.retired,
+            "reprofiled": self.reprofiled,
             "horizon_until": self.horizon_until.isoformat() if self.horizon_until else None,
             "profile_missing": self.profile_missing,
         }
@@ -208,14 +211,26 @@ def maintain_grid(
         # сценарий, заведенный до появления поля, иначе остался бы неотмеченным
         # и продолжил бы попадать в агрегаты рынка.
         scenario.is_showcase_grid = True
-        # Закрепление за методикой обновляется и у существующих: новая версия
-        # профиля иначе не дошла бы до уже заведенной сетки, и витрина осталась
-        # бы считаться по архивной методике до полной пересборки сетки.
-        scenario.calculation_profile_id = profile.id
         if created:
             report.created += 1
         else:
             report.existing += 1
+
+    # Закрепление за методикой обновляется у всей действующей сетки, а не только
+    # у сегодняшних черновиков: новая версия профиля иначе не дошла бы до уже
+    # заведенных сценариев. Черновиками не покрыты даты, вышедшие из горизонта,
+    # но еще не снятые с наблюдения, — на переходе версий они остались бы за
+    # архивным профилем, а он подменяется методикой по умолчанию молча: расчет
+    # состоится, но по чужим правилам, и по цифрам это не видно.
+    stale = session.scalars(
+        select(TravelScenario)
+        .where(TravelScenario.deleted_at.is_(None))
+        .where(TravelScenario.is_showcase_grid.is_(True))
+        .where(TravelScenario.calculation_profile_id != profile.id)
+    ).all()
+    for scenario in stale:
+        scenario.calculation_profile_id = profile.id
+    report.reprofiled = len(stale)
 
     report.retired = retire_expired(session, today=today)
     return report
