@@ -116,6 +116,43 @@ class TestBatchClosesItself:
         assert batch.progress_current == 1
         assert batch.status == JobStatus.RUNNING.value
 
+    def test_reused_child_counts_for_the_batch_running_it(self, session):
+        """Принудительный прогон переиспользует задачу сценария вместе с ней самой.
+
+        Ссылка на пачку в ней при этом остается прежней, и без перевода на
+        текущий прогон новая пачка не досчитывалась бы до итога — то есть
+        повисала бы ровно так, как до исправления.
+        """
+        first, second = make_batch(session, total=1), make_batch(session, total=1)
+        child = make_child(session, first)
+        job_service.transition(session, child, JobStatus.SUCCESS)
+
+        child.parent_job_id = second.id
+        session.flush()
+        job_service.transition(session, child, JobStatus.RUNNING)
+        job_service.transition(session, child, JobStatus.SUCCESS)
+
+        session.refresh(first)
+        session.refresh(second)
+        assert first.status == JobStatus.SUCCESS.value
+        assert second.status == JobStatus.SUCCESS.value
+
+    def test_stolen_child_lets_the_previous_batch_finish(self, session):
+        """Незавершенный сценарий, ушедший другому прогону, отмечается в прежнем."""
+        first, second = make_batch(session, total=1), make_batch(session, total=1)
+        child = make_child(session, first)
+
+        previous_parent = child.parent_job_id
+        child.parent_job_id = second.id
+        session.flush()
+        job_service.report_child_finished(session, previous_parent)
+        job_service.transition(session, child, JobStatus.SUCCESS)
+
+        session.refresh(first)
+        session.refresh(second)
+        assert first.status == JobStatus.SUCCESS.value
+        assert second.status == JobStatus.SUCCESS.value
+
     def test_scenario_without_own_job_is_still_counted(self, session):
         """Невалидный сценарий выбывает, не заведя задачи, и отмечается сам."""
         batch = make_batch(session, total=2)

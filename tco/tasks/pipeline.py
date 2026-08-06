@@ -437,6 +437,17 @@ def refresh_monitoring_scenario(
                 "job_id": str(job.id),
             }
 
+        # Задача сценария опознается по отпечатку и часовому окну, поэтому
+        # принудительный прогон переиспользует ее вместе со ссылкой на пачку,
+        # которая ее завела. Считать сценарий должен тот прогон, который его
+        # сейчас выполняет, иначе его пачка не досчитается до итога и повиснет.
+        if parent_job_id and str(job.parent_job_id) != str(parent_job_id):
+            previous_parent = job.parent_job_id
+            job.parent_job_id = uuid.UUID(parent_job_id)
+            if not job.is_terminal:
+                # Прежняя пачка отметки по нему уже не дождется.
+                job_service.report_child_finished(session, previous_parent)
+
         job_service.transition(session, job, JobStatus.RUNNING, message="Плановый снимок")
         shell = create_snapshot(
             session,
