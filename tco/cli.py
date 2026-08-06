@@ -90,7 +90,13 @@ def cmd_run_monitoring(args: argparse.Namespace) -> int:
     from tco.tasks.pipeline import refresh_all_monitoring_scenarios
 
     result = refresh_all_monitoring_scenarios.apply(
-        kwargs={"force_refresh": args.force, "limit": args.limit}
+        kwargs={
+            "force_refresh": args.force,
+            "limit": args.limit,
+            "with_tag": args.with_tag,
+            "without_tag": args.without_tag,
+            "requested_by": "cli",
+        }
     ).get()
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0
@@ -197,6 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
     mon = sub.add_parser("run-monitoring", help="Прогон мониторинга синхронно")
     mon.add_argument("--force", action="store_true", help="Игнорировать идемпотентность окна")
     mon.add_argument("--limit", type=int, default=None, help="Ограничить число сценариев")
+    mon.add_argument("--with-tag", default=None, help="Только сценарии с этим тегом")
+    mon.add_argument("--without-tag", default=None, help="Исключить сценарии с этим тегом")
     mon.set_defaults(func=cmd_run_monitoring)
 
     conf = sub.add_parser("source-confidence", help="Пересчитать Source Confidence")

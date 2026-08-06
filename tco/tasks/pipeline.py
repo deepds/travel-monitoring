@@ -402,6 +402,9 @@ def refresh_monitoring_scenario(
                 scenario=scenario.code,
                 errors=[issue.code for issue in validation.errors],
             )
+            # Сценарий выбыл, не заведя собственной задачи: отметить его в
+            # пачке некому, а без отметки она не досчитается до итога.
+            job_service.report_child_finished(session, parent_job_id)
             return {
                 "scenario": scenario.code,
                 "status": "UNSUPPORTED",
@@ -425,6 +428,9 @@ def refresh_monitoring_scenario(
         )
         job = handle.job
         if not handle.created and job.is_terminal and not force_refresh:
+            # Задача уже закрыта прошлым прогоном и второй раз о себе не
+            # сообщит — отмечаем сценарий пройденным здесь.
+            job_service.report_child_finished(session, parent_job_id)
             return {
                 "scenario": scenario.code,
                 "status": "SKIPPED_IDEMPOTENT",
@@ -477,6 +483,23 @@ def refresh_monitoring_scenario(
         ),
     )
     async_result = workflow.apply_async()
+
+    with session_scope() as session:
+        job = job_service.get_job(session, job_id)
+        # С этого момента и до первого шага конвейера сценарий ждет очереди, а
+        # не работает. В суточном прогоне сетки ожидание доходит до часа: 1703
+        # сценария диспетчеризуются за минуты, а собираются по лимиту темпа
+        # источников. Оставаясь RUNNING, задача попадала под детектор зависших
+        # и объявлялась мертвой, продолжая при этом работать — на стенде так
+        # помечалось до 70 % суточного прогона.
+        if not job.is_terminal:
+            job_service.transition(
+                session,
+                job,
+                JobStatus.QUEUED,
+                message="Ожидает сбора предложений",
+            )
+
     return {
         "scenario": scenario_code,
         "snapshot_id": snapshot_id,
@@ -517,6 +540,7 @@ def refresh_all_monitoring_scenarios(
     limit: int | None = None,
     with_tag: str | None = None,
     without_tag: str | None = None,
+    requested_by: str = "scheduler",
 ) -> dict[str, Any]:
     """Плановый прогон активных сценариев мониторинга.
 
@@ -530,6 +554,11 @@ def refresh_all_monitoring_scenarios(
 
     Отбор по тегу идет в Python: ``JSONB.contains`` есть только в PostgreSQL,
     а на SQLite молча не находит ничего.
+
+    ``requested_by`` вместе с областью отбора входит в ключ идемпотентности:
+    суточный прогон сетки, часовой прогон каталога и ручной досбор попадают в
+    одно часовое окно, и с общим ключом второй из них молча возвращал бы
+    ``SKIPPED_IDEMPOTENT`` вместо работы.
     """
     settings = get_settings()
     today = utcnow().date()
@@ -550,18 +579,32 @@ def refresh_all_monitoring_scenarios(
         if limit:
             active = active[:limit]
 
+        scope = ";".join(
+            (
+                f"with={with_tag or ''}",
+                f"without={without_tag or ''}",
+                f"limit={limit or ''}",
+                f"by={requested_by}",
+            )
+        )
         handle = job_service.create_job(
             session,
             job_type=JobType.MONITORING_BATCH,
             idempotency_key=job_idempotency_key(
-                fingerprint="monitoring-batch",
+                fingerprint=f"monitoring-batch:{scope}",
                 requested_at=utcnow(),
                 bucket_hours=settings.snapshot_interval_hours,
                 profile_version=profile_id or "active",
                 run_type="BATCH",
             ),
-            params={"scenario_count": len(active), "force_refresh": force_refresh},
-            created_by="scheduler",
+            params={
+                "scenario_count": len(active),
+                "force_refresh": force_refresh,
+                "with_tag": with_tag,
+                "without_tag": without_tag,
+                "requested_by": requested_by,
+            },
+            created_by=requested_by,
             reuse_terminal=not force_refresh,
         )
         batch_job = handle.job
@@ -605,13 +648,17 @@ def refresh_all_monitoring_scenarios(
 
     with session_scope() as session:
         batch_job = job_service.get_job(session, batch_job_id)
-        job_service.transition(
-            session,
-            batch_job,
-            JobStatus.SUCCESS if settings.celery_task_always_eager else JobStatus.RUNNING,
-            message=f"Диспетчеризовано {len(scenario_ids)} сценариев",
-            result={"scenario_count": len(scenario_ids), "group_id": str(async_result.id)},
-        )
+        # Пачку закрывает последний досчитавшийся ребенок, и на коротком прогоне
+        # он успевает это сделать раньше, чем вернется ``apply_async``. Тогда
+        # переводить ее обратно в RUNNING нельзя: закрыть ее больше некому.
+        if not batch_job.is_terminal:
+            job_service.transition(
+                session,
+                batch_job,
+                JobStatus.RUNNING,
+                message=f"Диспетчеризовано {len(scenario_ids)} сценариев",
+                result={"scenario_count": len(scenario_ids), "group_id": str(async_result.id)},
+            )
 
     return {
         "status": "DISPATCHED",

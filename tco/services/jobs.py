@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from tco.core.enums import JobStatus, JobType
@@ -121,6 +121,10 @@ def transition(
 ) -> Job:
     """Переводит задачу в новое состояние и фиксирует событие."""
     now = utcnow()
+    # Терминальный статус не всегда последний: задачу, ошибочно признанную
+    # зависшей, следующий шаг конвейера доводит до SUCCESS. В родительской
+    # пачке она при этом должна отметиться один раз, а не дважды.
+    was_terminal = job.is_terminal
     job.status = status.value
     job.updated_at = now
     job.heartbeat_at = now
@@ -142,7 +146,75 @@ def transition(
 
     add_event(session, job, status, message, payload)
     session.flush()
+
+    if status.is_terminal and not was_terminal and job.parent_job_id is not None:
+        report_child_finished(session, job.parent_job_id)
+
     return job
+
+
+#: Статусы, в которых пачка еще принимает отметки о завершении детей.
+_LIVE_STATUSES = (JobStatus.RUNNING.value, JobStatus.RETRYING.value)
+
+
+def report_child_finished(session: Session, parent_job_id: uuid.UUID | str | None) -> Job | None:
+    """Отмечает в родительской пачке, что дочерняя задача дошла до конца.
+
+    После диспетчеризации пачка не делает ничего сама: работу выполняют дети.
+    Без этой отметки ее ``heartbeat_at`` замирает на моменте запуска, и
+    ``detect_stalled_jobs`` через четверть часа объявляет живой прогон
+    зависшим — а закончиться пачке нечем, она так и остается незакрытой.
+    Отметка двигает прогресс и продлевает heartbeat одним действием.
+
+    Инкремент делается одним ``UPDATE``: сценарии считаются восемью процессами
+    параллельно, и чтение с последующей записью теряло бы отметки. Условие по
+    статусу заодно делает закрытие однократным — до итога доходит ровно один
+    ребенок, остальные попадают уже в терминальную пачку и ничего не меняют.
+
+    Возвращает пачку, если этой отметкой она закрылась.
+    """
+    if parent_job_id is None:
+        return None
+
+    parent_id = uuid.UUID(str(parent_job_id))
+    now = utcnow()
+    row = session.execute(
+        update(Job)
+        .where(Job.id == parent_id)
+        .where(Job.status.in_(_LIVE_STATUSES))
+        .values(
+            progress_current=Job.progress_current + 1,
+            heartbeat_at=now,
+            updated_at=now,
+        )
+        .returning(Job.progress_current, Job.progress_total)
+        .execution_options(synchronize_session=False)
+    ).first()
+    if row is None:
+        return None
+
+    current, total = row
+    if not total or current < total:
+        return None
+
+    parent = session.get(Job, parent_id, populate_existing=True)
+    if parent is None or parent.is_terminal:
+        return None
+
+    by_status = dict(
+        session.execute(
+            select(Job.status, func.count())
+            .where(Job.parent_job_id == parent_id)
+            .group_by(Job.status)
+        ).all()
+    )
+    return transition(
+        session,
+        parent,
+        JobStatus.SUCCESS,
+        message=f"Завершены все {total} дочерних задач",
+        result={**parent.result, "children_by_status": by_status},
+    )
 
 
 def set_progress(
@@ -182,18 +254,38 @@ def cancel_job(session: Session, job: Job, *, actor: str | None = None) -> Job:
     )
 
 
-def detect_stalled_jobs(session: Session, *, stale_after_seconds: int = 900) -> list[Job]:
+def detect_stalled_jobs(
+    session: Session,
+    *,
+    stale_after_seconds: int = 900,
+    queued_stale_after_seconds: int = 4 * 3600,
+) -> list[Job]:
     """Находит зависшие задачи и переводит их в ``TIMED_OUT``.
 
     Признак зависания — отсутствие heartbeat дольше порога при незавершенном
     статусе (DELTA §11.2 «зависшая задача обнаруживается»).
+
+    Порогов два, потому что ожидание очереди — не зависание. Суточный прогон
+    сетки диспетчеризует 1703 сценария за минуты, а собирает их по лимиту
+    темпа источников больше часа, и по общему порогу большинство живых задач
+    объявлялось бы мертвыми. Из очереди задача все же должна выбраться за
+    смену: иначе это потерянная задача, а не ждущая.
     """
-    cutoff = utcnow() - timedelta(seconds=stale_after_seconds)
+    now = utcnow()
+    cutoff = now - timedelta(seconds=stale_after_seconds)
+    queued_cutoff = now - timedelta(seconds=queued_stale_after_seconds)
     candidates = session.scalars(
         select(Job)
-        .where(Job.status.in_([JobStatus.RUNNING.value, JobStatus.RETRYING.value]))
         .where(Job.heartbeat_at.is_not(None))
-        .where(Job.heartbeat_at < cutoff)
+        .where(
+            or_(
+                and_(
+                    Job.status.in_([JobStatus.RUNNING.value, JobStatus.RETRYING.value]),
+                    Job.heartbeat_at < cutoff,
+                ),
+                and_(Job.status == JobStatus.QUEUED.value, Job.heartbeat_at < queued_cutoff),
+            )
+        )
     ).all()
 
     stalled: list[Job] = []
