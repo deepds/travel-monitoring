@@ -403,6 +403,10 @@ def calculate_from_snapshot(
         profile_code=profile.code,
         profile_version=profile.version,
         market_snapshot_id=snapshot.id,
+        # Снимок закрывается позже своей отметки: сбор идет минутами. Свежесть
+        # считается от закрытия, иначе у предложений выходит отрицательный
+        # возраст, а он читается как идеальная свежесть.
+        observed_at=snapshot.completed_at or snapshot.observed_at,
         snapshot_meta={
             "snapshot_type": snapshot.snapshot_type,
             "observed_at": snapshot.observed_at.isoformat(),

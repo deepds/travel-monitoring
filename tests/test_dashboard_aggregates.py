@@ -194,3 +194,47 @@ class TestDirectionsWithoutTransport:
 
         assert without, "сценарий без транспорта не попал в выдачу"
         assert all(row["transport_type"] != "" for row in rows)
+
+
+class TestFreshnessIsMeasuredFromTheSnapshot:
+    """Повторный расчет старого снимка не должен упираться в свежесть.
+
+    Допуск источника отвечает на вопрос «не устарели ли предложения к моменту
+    наблюдения», а не «давно ли это было». Пока возраст считался от времени
+    расчета, пересчет двухдневного снимка давал возраст около 2900 минут при
+    пороге 120 и выходил NO_DATA — то есть исправить прошлые числа новой
+    методикой было нельзя в принципе.
+    """
+
+    @staticmethod
+    def build(observed_at, started_at):
+        from tco.core.enums import ConnectorOutcome
+        from tco.engine.aggregation import check_eligibility
+        from tco.schemas.profile import ProfileRules
+
+        rules = ProfileRules.parse({"eligibility": {"max_data_age_minutes": 120}})
+
+        class Info:
+            collected_at = observed_at
+            outcome = ConnectorOutcome.SUCCESS
+            is_synthetic = False
+            source_code = "rzd"
+
+        eligible, reasons, age = check_eligibility(Info(), [], [], rules, now=started_at)
+        return reasons, age
+
+    def test_age_from_calculation_time_rejects_a_two_day_old_snapshot(self):
+        from datetime import timedelta
+
+        observed = utcnow() - timedelta(days=2)
+        _, age = self.build(observed, utcnow())
+
+        assert age is not None and age > 120
+
+    def test_age_from_the_snapshot_moment_stays_within_the_window(self):
+        from datetime import timedelta
+
+        observed = utcnow() - timedelta(days=2)
+        _, age = self.build(observed, observed + timedelta(minutes=3))
+
+        assert age is not None and age < 120

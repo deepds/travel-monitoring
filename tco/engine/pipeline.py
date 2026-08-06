@@ -164,6 +164,10 @@ class EngineInput:
     job_id: Any = None
     served_from_cache: bool = False
     started_at: datetime | None = None
+    #: Момент, который описывает снимок. Свежесть данных считается от него, а не
+    #: от времени расчета: расчет — операция над снимком, и ее результат не
+    #: должен зависеть от того, когда ее запустили.
+    observed_at: datetime | None = None
     challenge_verified: bool | None = None
 
 
@@ -187,6 +191,12 @@ def calculate_run(payload: EngineInput) -> EngineResult:
     scenario = payload.scenario
     rules = payload.rules
     observation_date = payload.observation_date or started_at.date()
+    # Допуск по свежести отвечает на вопрос «не устарели ли предложения к
+    # моменту наблюдения», а не «давно ли это было». От времени расчета его
+    # считать нельзя: повторный расчет исторического снимка тогда всегда
+    # выходит NO_DATA, потому что снимку сутки, и починить прошлые числа
+    # исправленной методикой становится невозможно.
+    observed_at = payload.observed_at or started_at
 
     # --- Отбор ------------------------------------------------------------ #
     transport_offers = [
@@ -217,14 +227,14 @@ def calculate_run(payload: EngineInput) -> EngineResult:
     )
 
     transport = aggregate_component(
-        ComponentType.TRANSPORT, transport_infos, transport_by_source, rules, now=started_at
+        ComponentType.TRANSPORT, transport_infos, transport_by_source, rules, now=observed_at
     )
     accommodation = aggregate_component(
         ComponentType.ACCOMMODATION,
         accommodation_infos,
         accommodation_by_source,
         rules,
-        now=started_at,
+        now=observed_at,
     )
 
     _mark_ineligible_sources(transport_offers, transport)
