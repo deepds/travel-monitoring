@@ -145,6 +145,11 @@ class TestCollectionTasksAreBounded:
     освобождается, воркер продолжает сам.
     """
 
+    COLLECT_TASKS = (
+        "tco.collect.collect_transport_offers",
+        "tco.collect.collect_accommodation_offers",
+    )
+
     @staticmethod
     def annotations():
         from tco.tasks.celery_app import celery_app
@@ -152,12 +157,20 @@ class TestCollectionTasksAreBounded:
         return celery_app.conf.task_annotations
 
     def test_collect_tasks_have_a_hard_limit(self):
-        limits = self.annotations()["tco.collect.*"]
-
-        assert limits["time_limit"] > limits["soft_time_limit"] > 0
+        for name in self.COLLECT_TASKS:
+            limits = self.annotations()[name]
+            assert limits["time_limit"] > limits["soft_time_limit"] > 0
 
     def test_limit_leaves_room_for_legitimate_collection(self):
         """Сбор ЖД законно идет минутами: карта мест — отдельный вызов на поезд."""
-        limits = self.annotations()["tco.collect.*"]
+        for name in self.COLLECT_TASKS:
+            assert self.annotations()[name]["soft_time_limit"] >= 240
 
-        assert limits["soft_time_limit"] >= 240
+    def test_names_are_exact_not_globs(self):
+        """`task_annotations` понимает только точное имя задачи или `*`.
+
+        Правило, написанное по образцу `task_routes` — `tco.collect.*` — молча
+        не применяется: на стенде предел не сработал, и сбор при недоступном
+        источнике шел полчаса на сценарий.
+        """
+        assert not [key for key in self.annotations() if key.endswith(".*")]
