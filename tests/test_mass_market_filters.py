@@ -23,7 +23,7 @@ from tco.core.enums import (
     TransportType,
     ValidityStatus,
 )
-from tco.db.models.offer import FlightOffer, Offer, RailOffer
+from tco.db.models.offer import AccommodationOffer, FlightOffer, Offer, RailOffer
 from tco.engine.selection import ScenarioFilterSpec, apply_profile_filter, SelectionStats
 from tco.schemas.profile import ProfileRules
 
@@ -153,6 +153,75 @@ class TestRailServiceClass:
     def test_baseline_ignores_service_class(self, baseline):
         assert reason_for(rail(service_classes=["2Ф"]), TransportType.RAIL, baseline) is None
         assert reason_for(rail(service_classes=[]), TransportType.RAIL, baseline) is None
+
+
+def hotel(*, room_name: str | None) -> Offer:
+    offer = _offer(OfferType.ACCOMMODATION, 7_000)
+    offer.accommodation = AccommodationOffer(
+        accommodation_type=AccommodationType.HOTEL.value,
+        stars=3,
+        stars_status="RATED",
+        meal_type=MealType.NO_MEALS.value,
+        cancellation_type="NON_REFUNDABLE",
+        capacity_confirmed=True,
+        room_name=room_name,
+        nights=1,
+        room_count=1,
+    )
+    return offer
+
+
+def stay_reason(offer: Offer, rules: ProfileRules) -> str | None:
+    spec = ScenarioFilterSpec(
+        transport_type=None,
+        flight_fare_type=None,
+        rail_class=None,
+        accommodation_type=AccommodationType.HOTEL,
+        stars=StarsFilter.S3,
+        meal_type=MealType.ANY,
+        cancellation_filter="ANY",
+    )
+    apply_profile_filter([offer], spec, rules, SelectionStats(total=1))
+    if offer.exclusion_reason == ExclusionReason.NONE.value:
+        return None
+    return offer.exclusion_detail
+
+
+class TestApartmentsAreNotMassMarket:
+    """Апартаменты и хостелы исключены по прямому указанию руководителя.
+
+    Это другой продукт с другой ценой: в казанской выдаче апартаменты идут по
+    12–14 тысяч рублей за ночь при медиане отелей около семи, и их доля там
+    9,4 % против 0,1 % в московской. Смешанная выборка описывала бы не
+    гостиничный рынок города, а его смесь с арендой квартир — причем в разных
+    городах в разной пропорции, то есть города переставали бы быть
+    сопоставимыми.
+
+    Проверка идет по категории номера, потому что тип объекта источник в
+    ответе не возвращает вовсе.
+    """
+
+    RULES = ProfileRules.parse(
+        {"filters": {"accommodation_excluded_room_keywords": ["апартамент", "хостел"]}}
+    )
+
+    def test_apartment_is_excluded(self):
+        detail = stay_reason(hotel(room_name="Апартаменты с кухней"), self.RULES)
+        assert detail == "ROOM_CATEGORY_EXCLUDED"
+
+    def test_case_does_not_matter(self):
+        assert stay_reason(hotel(room_name="АПАРТАМЕНТЫ"), self.RULES) == "ROOM_CATEGORY_EXCLUDED"
+
+    def test_ordinary_room_passes(self):
+        assert stay_reason(hotel(room_name="Стандартный двухместный"), self.RULES) is None
+
+    def test_missing_room_name_is_not_a_reason_to_drop(self):
+        """Иначе терялись бы обычные отели там, где выдача беднее."""
+        assert stay_reason(hotel(room_name=None), self.RULES) is None
+
+    def test_baseline_keeps_apartments(self):
+        """Базовая методика наблюдает рынок целиком — витрина ей не указ."""
+        assert stay_reason(hotel(room_name="Апартаменты"), ProfileRules.parse({})) is None
 
 
 class TestSelectionIsRepeatable:
