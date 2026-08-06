@@ -218,22 +218,38 @@ export default function DashboardPage() {
       </SectionTitle>
 
       <AsyncBlock loading={overview.loading} error={overview.error}>
-        <Row gutter={[16, 16]}>
+        {/* Четыре плитки в один ряд и одной высоты: `align="stretch"` тянет
+            колонку, `height: 100%` — саму карточку. Без второго карточка
+            остается по своему содержимому, и ряд выходит рваным. */}
+        <Row gutter={[16, 16]} align="stretch">
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
+              style={{ height: '100%' }}
               title="Типовая стоимость"
               value={money(data?.median_total_cost as number)}
               hint="Медиана итоговой стоимости по всем полным расчетам выборки."
-              extra={
-                <span>
-                  <ChangeIndicator value={data?.change_7d as number} />{' '}
-                  <Text type="secondary">за 7 дней</Text>
-                </span>
-              }
+              extra={<Text type="secondary">медиана полных расчетов выборки</Text>}
             />
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <MetricCard
+              style={{ height: '100%' }}
+              title="Изменение за 1 день"
+              value={<ChangeIndicator value={data?.change_1d as number} />}
+              extra={<Text type="secondary">к наблюдению вчерашнего дня</Text>}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <MetricCard
+              style={{ height: '100%' }}
+              title="Изменение за 7 дней"
+              value={<ChangeIndicator value={data?.change_7d as number} />}
+              extra={<Text type="secondary">к наблюдению недельной давности</Text>}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <MetricCard
+              style={{ height: '100%' }}
               title="Направлений под наблюдением"
               value={num(data?.scenario_count as number)}
               extra={

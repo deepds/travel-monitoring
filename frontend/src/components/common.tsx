@@ -7,7 +7,7 @@ import {
   MinusOutlined,
 } from '@ant-design/icons';
 import { Alert, Card, Empty, Spin, Statistic, Tag, Tooltip, Typography } from 'antd';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 import type { ConfidenceLevel, RunStatus } from '@/api/types';
 import {
@@ -141,16 +141,17 @@ interface MetricCardProps {
   extra?: ReactNode;
   hint?: string;
   loading?: boolean;
+  style?: CSSProperties;
 }
 
-export function MetricCard({ title, value, suffix, extra, hint, loading }: MetricCardProps) {
+export function MetricCard({ title, value, suffix, extra, hint, loading, style }: MetricCardProps) {
   // Statistic приводит `value` к строке, поэтому готовый узел (например,
   // индикатор изменения) отдается через formatter: иначе на экран попадает
   // «[object Object]».
   const isNode = value !== null && typeof value === 'object';
 
   return (
-    <Card size="small" loading={loading}>
+    <Card size="small" loading={loading} style={style}>
       <Statistic
         title={hint ? <LabelWithHint text={title} hint={hint} /> : title}
         value={isNode ? undefined : (value as string | number)}

@@ -84,12 +84,19 @@ export default function SnapshotsPage() {
                   </Link>
                 ),
               },
+              // Ширина не задана намеренно: свободное место таблицы уходит
+              // сюда, а не копится между столбцами с короткими значениями.
+              // Коды сценариев длинные, и переносить их есть куда.
               { title: 'Сценарий', dataIndex: 'scenario_code', render: (v: string) => <span className="tco-monospace">{v}</span> },
               {
                 title: 'Наблюдение',
                 dataIndex: 'observed_at',
+                width: 215,
                 render: (value: string, row) => (
-                  <span>
+                  // Дата и окно наблюдения — одна величина, и переносить плашку
+                  // под дату нельзя: строка таблицы вырастает вдвое, а плашка
+                  // начинает читаться как отдельное свойство снимка.
+                  <span style={{ whiteSpace: 'nowrap' }}>
                     {dateTime(value)}
                     {row.observation_slot != null ? <Tag style={{ marginLeft: 6 }}>окно {row.observation_slot}</Tag> : null}
                   </span>
@@ -98,11 +105,13 @@ export default function SnapshotsPage() {
               {
                 title: 'Тип',
                 dataIndex: 'snapshot_type',
+                width: 180,
                 render: (v: string) => <Tag>{labelOf(SNAPSHOT_TYPE_LABEL, v)}</Tag>,
               },
               {
                 title: 'Статус',
                 dataIndex: 'status',
+                width: 120,
                 render: (value: string) => (
                   <Tag color={STATUS_COLOR[value]}>{labelOf(SNAPSHOT_STATUS_LABEL, value)}</Tag>
                 ),
@@ -111,23 +120,27 @@ export default function SnapshotsPage() {
                 title: 'Транспорт',
                 dataIndex: 'transport_offer_count',
                 align: 'right',
+                width: 110,
                 render: (v: number) => num(v),
               },
               {
                 title: 'Проживание',
                 dataIndex: 'accommodation_offer_count',
                 align: 'right',
+                width: 120,
                 render: (v: number) => num(v),
               },
               {
                 title: 'Валидных',
                 dataIndex: 'valid_offer_count',
                 align: 'right',
+                width: 110,
                 render: (v: number) => num(v),
               },
               {
                 title: 'Источники',
                 dataIndex: 'source_codes',
+                width: 170,
                 render: (value: string[]) => value.map((code) => <Tag key={code}>{code}</Tag>),
               },
               {
