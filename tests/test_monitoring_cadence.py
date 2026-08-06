@@ -93,3 +93,42 @@ class TestCadenceSplit:
 
         hourly = select_by_tag(scenarios, without_tag=DAILY_CADENCE_TAG)
         assert all(item in hourly for item in plain)
+
+
+class TestDailyRunIsSplitByComponent:
+    """Суточный прогон разнесен по компонентам, иначе источник не выдерживает.
+
+    Одним залпом это 1758 сценариев. На прогоне 6 августа размыкатель цепи
+    открылся в середине, и проживание — оно собирается только у Туту —
+    осталось без сбора по 395 сценариям из 465. Тот же набор, собранный
+    отдельно, прошел без единого срабатывания размыкателя.
+    """
+
+    ACCOMMODATION_TAG = "showcase-accommodation"
+
+    @staticmethod
+    def entries():
+        from tco.tasks.celery_app import celery_app
+
+        return celery_app.conf.beat_schedule
+
+    def test_transport_and_accommodation_run_at_different_hours(self):
+        schedule = self.entries()
+        transport = schedule["monitoring-snapshot-daily"]["schedule"]
+        accommodation = schedule["monitoring-snapshot-daily-accommodation"]["schedule"]
+
+        assert transport.hour != accommodation.hour
+
+    def test_daily_transport_run_excludes_accommodation(self):
+        kwargs = self.entries()["monitoring-snapshot-daily"]["kwargs"]
+
+        assert kwargs["without_tag"] == self.ACCOMMODATION_TAG
+
+    def test_split_covers_the_daily_scope_without_overlap(self, scenarios):
+        """Ни один суточный сценарий не потерян и ни один не собирается дважды."""
+        daily = select_by_tag(scenarios, with_tag=DAILY_CADENCE_TAG)
+        transport = select_by_tag(daily, without_tag=self.ACCOMMODATION_TAG)
+        accommodation = select_by_tag(scenarios, with_tag=self.ACCOMMODATION_TAG)
+
+        assert len(transport) + len(accommodation) == len(daily)
+        assert not {id(item) for item in transport} & {id(item) for item in accommodation}

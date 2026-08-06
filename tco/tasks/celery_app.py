@@ -66,19 +66,38 @@ celery_app.conf.beat_schedule = {
     # Раз в сутки — все остальное: сетка витрины (она на порядок больше, и в
     # часовом прогоне давала бы 42 тысячи обращений к источникам в сутки) и
     # направления вне пятерки ключевых городов, где суточного шага достаточно.
+    # Суточный прогон, в свою очередь, разделен по компонентам — см. ниже.
     "monitoring-snapshot": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="5", hour=_snapshot_hours),
         "options": {"queue": "compute", "expires": _snapshot_expires},
         "kwargs": {"without_tag": "cadence:daily"},
     },
-    # После обслуживающей задачи, достраивающей сетку: иначе самая дальняя дата
-    # горизонта пропустила бы сутки.
+    # Суточный прогон разнесен на два: проезд в час ночи, проживание в два.
+    #
+    # Одним залпом это 1758 сценариев, и источник такого не выдерживает: на
+    # прогоне 6 августа размыкатель цепи открылся в середине, и проживание —
+    # оно собирается только у Туту — осталось без сбора по 395 сценариям из
+    # 465. Тот же набор, собранный отдельно, прошел без единого срабатывания
+    # размыкателя: 1154 успешных обращения.
+    #
+    # Час разрыва берется с запасом: проезд укладывается примерно в сорок
+    # минут, и если он затянется, проживание встанет в очередь за ним, а не
+    # рядом с ним.
+    #
+    # Оба прогона попадают в одно часовое окно идемпотентности, но получают
+    # разные задачи: область отбора входит в ключ.
     "monitoring-snapshot-daily": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="0", hour="1"),
         "options": {"queue": "compute", "expires": 20 * 3600},
-        "kwargs": {"with_tag": "cadence:daily"},
+        "kwargs": {"with_tag": "cadence:daily", "without_tag": "showcase-accommodation"},
+    },
+    "monitoring-snapshot-daily-accommodation": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="0", hour="2"),
+        "options": {"queue": "compute", "expires": 20 * 3600},
+        "kwargs": {"with_tag": "showcase-accommodation"},
     },
     # Раньше планового сбора: сетка должна быть достроена к моменту, когда
     # начнется наблюдение, иначе самая дальняя дата горизонта пропустит сутки.
