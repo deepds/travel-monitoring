@@ -153,3 +153,40 @@ class TestRailServiceClass:
     def test_baseline_ignores_service_class(self, baseline):
         assert reason_for(rail(service_classes=["2Ф"]), TransportType.RAIL, baseline) is None
         assert reason_for(rail(service_classes=[]), TransportType.RAIL, baseline) is None
+
+
+class TestSelectionIsRepeatable:
+    """Повторный отбор начинается с чистого листа.
+
+    Пометка исключения, поставленная прошлым расчетом, не сбрасывалась, а в
+    выборку берутся только предложения с `NONE`. Поэтому однажды отбракованное
+    предложение не возвращалось никогда, и пересчет снимка новой методикой
+    давал тот же результат, что и старой: правила применялись, но их вердикт
+    не мог перебить запись прошлого прохода.
+    """
+
+    def test_offer_returns_when_the_rule_that_excluded_it_is_gone(self):
+        from tco.engine.selection import run_selection
+
+        offer = rail(service_classes=["2Ш"])
+        spec = spec_for(TransportType.RAIL)
+        strict = ProfileRules.parse({"filters": {"rail_service_classes": ["2К"]}})
+        relaxed = ProfileRules.parse({"filters": {"rail_service_classes": []}})
+
+        run_selection([offer], spec, strict)
+        assert offer.exclusion_reason == ExclusionReason.PROFILE_FILTER.value
+
+        run_selection([offer], spec, relaxed)
+        assert offer.exclusion_reason == ExclusionReason.NONE.value
+
+    def test_repeated_run_with_the_same_rules_is_stable(self):
+        from tco.engine.selection import run_selection
+
+        offer = rail(service_classes=["2Ш"])
+        spec = spec_for(TransportType.RAIL)
+        rules = ProfileRules.parse({"filters": {"rail_service_classes": []}})
+
+        run_selection([offer], spec, rules)
+        run_selection([offer], spec, rules)
+
+        assert offer.exclusion_reason == ExclusionReason.NONE.value
