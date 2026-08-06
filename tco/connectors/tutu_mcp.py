@@ -101,7 +101,14 @@ ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "breakfast_included": ("breakfast_included", "with_breakfast"),
     "free_cancellation": ("free_cancellation", "refundable_only"),
     "per_page": ("per_page", "limit", "page_size", "count"),
-    "page": ("page", "page_number", "offset"),
+    # ``offset`` в кандидатах не значится намеренно: это другая величина.
+    # Номер страницы, отправленный как смещение, дал бы вторую позицию выдачи
+    # вместо второй страницы — то есть тихо вернул бы почти те же объекты.
+    "page": ("page", "page_number"),
+    # Тип объекта размещения. Источник умеет отсекать апартаменты и хостелы на
+    # своей стороне, и это дешевле, чем отбирать их у себя: выдача ограничена
+    # тридцатью объектами на страницу, и каждый лишний объект вытесняет отель.
+    "hotel_types": ("hotel_types", "property_types", "accommodation_types", "types"),
 }
 
 #: Ключи, под которыми в ответах встречается список предложений.
@@ -119,6 +126,20 @@ TUTU_MEAL_FILTER: dict[str, str] = {
 #: Питание, которое подтверждается самим фактом серверной фильтрации: источник
 #: не возвращает ``meal_name``, но отбирает предложения по запрошенному плану.
 MEAL_CONFIRMED_BY_QUERY: frozenset[str] = frozenset({"BREAKFAST", *TUTU_MEAL_FILTER})
+
+#: Типы объектов размещения, составляющие массовый гостиничный сегмент.
+#:
+#: Апартаменты и хостелы исключены по прямому указанию руководителя: это другой
+#: продукт с другой ценой (в казанской выдаче апартаменты идут по 12–14 тысяч за
+#: ночь при медиане отелей около 7 тысяч). Фильтр отдается источнику, а не
+#: применяется у себя: страница выдачи ограничена тридцатью объектами, и каждый
+#: отсеянный потом апартамент — это вытесненный отель, которого мы уже не
+#: увидим.
+#:
+#: Проверять состав выборки этим фильтром нельзя: тип объекта источник в ответе
+#: не возвращает (поле пусто у всех 84 объектов казанской выдачи), поэтому
+#: контроль идет по категории номера в ``tco/engine/selection.py``.
+TUTU_MASS_MARKET_HOTEL_TYPES: tuple[str, ...] = ("hotel",)
 
 
 def _pick_arg(schema_properties: dict[str, Any], logical: str) -> str | None:
@@ -290,7 +311,11 @@ class TutuMcpConnector(BaseConnector):
     title = "Туту.ру (MCP)"
     category = SourceCategory.TRANSPORT
     supported_offer_types = (OfferType.FLIGHT, OfferType.RAIL, OfferType.ACCOMMODATION)
-    version = "1.0.0"
+    #: 1.1.0 — выдача отелей и авиа дочитывается постранично, апартаменты и
+    #: хостелы отсекаются на стороне источника. Версия поднята потому, что
+    #: изменился состав выборки, а не только код: сравнивать наблюдения 1.0.0 и
+    #: 1.1.0 напрямую нельзя.
+    version = "1.1.0"
     requires_credentials = False
     default_allowed_hosts = ("mcp.tutu.ru",)
 
@@ -377,6 +402,70 @@ class TutuMcpConnector(BaseConnector):
             )
         args[name] = clamped
         return name
+
+    def _fetch_pages(
+        self,
+        mcp: McpClient,
+        tool: str,
+        args: dict[str, Any],
+        props: dict[str, Any],
+        *,
+        paginate: bool,
+    ) -> tuple[list[tuple[dict[str, Any], Any]], dict[str, Any]]:
+        """Дочитывает выдачу инструмента постранично.
+
+        Поиск отдает не больше ``page_size`` объектов за раз (максимум схемы —
+        30), сортировки у него нет, и какие именно тридцать попадут в ответ,
+        решает источник. Пока читалась одна страница, выборка систематически
+        обрезалась: 95 % запросов по отелям и 90 % по авиа упирались в потолок.
+        По Казани это давало медиану 7 984 рубля вместо 6 923 по всем 84
+        объектам — то самое расхождение с сайтом, ради которого страница и
+        дочитывается.
+
+        По ЖД пагинация не нужна и не включается: на маршруте ходит три-пять
+        поездов, до потолка далеко (4,9 предложения на запрос у Туту, 2,6 у
+        РЖД), и лишние обращения там ничего не дадут.
+
+        Обход прекращается, когда страница пришла неполной или пустой — это
+        конец выдачи, — либо когда исчерпан бюджет времени сбора. Собранное к
+        этому моменту сохраняется, а результат помечается частичным: выборка
+        настоящая, но неполная, и об этом должно быть видно.
+        """
+        page_arg = _pick_arg(props, "page") if paginate else None
+        per_page_arg = _pick_arg(props, "per_page")
+        page_size = args.get(per_page_arg) if per_page_arg else None
+        limit = max(1, int(self.context.max_pages)) if page_arg else 1
+
+        pages: list[tuple[dict[str, Any], Any]] = []
+        stopped = "page_limit"
+        for number in range(1, limit + 1):
+            call_args = dict(args)
+            if page_arg is not None and number > 1:
+                self._set_arg(call_args, props, "page", number)
+            payload = mcp.call_tool(tool, call_args)
+            pages.append((call_args, payload))
+
+            count = len(_extract_offer_list(payload))
+            if count == 0:
+                stopped = "empty_page"
+                break
+            # Неполная страница означает конец выдачи: следующая была бы пустой.
+            if isinstance(page_size, int) and count < page_size:
+                stopped = "last_page"
+                break
+            if self.context.budget_exhausted:
+                stopped = "time_budget"
+                break
+
+        diagnostics = {
+            "pages_fetched": len(pages),
+            "pages_limit": limit,
+            "stopped_because": stopped,
+            # Обход прерван, а не завершен: за границей осталось неизвестно
+            # сколько объектов, и медиана по такой выборке смещена.
+            "truncated": stopped in ("page_limit", "time_budget") and len(pages) >= 1,
+        }
+        return pages, diagnostics
 
     def _geo_lookup(self, mcp: McpClient, city_name: str) -> Any | None:
         """Разрешает идентификатор города через ресурс ``tutu://geo``."""
@@ -498,20 +587,29 @@ class TutuMcpConnector(BaseConnector):
 
             raw_artifacts: list[RawArtifact] = []
             offers: list[Any] = []
+            # Дочитывается только авиа: у ЖД на маршруте три-пять поездов, и
+            # выдача до потолка страницы не доходит никогда.
+            paginate = is_avia
 
             if has_return_arg:
-                payload = mcp.call_tool(tool, args)
-                raw_artifacts.append(
-                    RawArtifact(
-                        payload=payload,
-                        endpoint=f"{self.endpoint}#{tool}",
-                        request_params=args,
-                        content_type="application/json",
+                pages, page_stats = self._fetch_pages(
+                    mcp, tool, args, props, paginate=paginate
+                )
+                for call_args, payload in pages:
+                    raw_artifacts.append(
+                        RawArtifact(
+                            payload=payload,
+                            endpoint=f"{self.endpoint}#{tool}",
+                            request_params=call_args,
+                            content_type="application/json",
+                        )
                     )
-                )
-                offers = self._parse_transport(
-                    payload, query, offer_type, round_trip=True, mcp=mcp
-                )
+                    offers.extend(
+                        self._parse_transport(
+                            payload, query, offer_type, round_trip=True, mcp=mcp
+                        )
+                    )
+                truncated = bool(page_stats["truncated"])
             else:
                 # Инструмент не принимает обратную дату — собираем round-trip
                 # из двух односторонних поисков.
@@ -525,25 +623,33 @@ class TutuMcpConnector(BaseConnector):
                 )
                 self._set_arg(inbound_args, props, "date_forward", query.return_date)
 
-                outbound_payload = mcp.call_tool(tool, outbound_args)
-                inbound_payload = mcp.call_tool(tool, inbound_args)
-                raw_artifacts.extend(
-                    [
-                        RawArtifact(
-                            payload=outbound_payload,
-                            endpoint=f"{self.endpoint}#{tool}:outbound",
-                            request_params=outbound_args,
-                        ),
-                        RawArtifact(
-                            payload=inbound_payload,
-                            endpoint=f"{self.endpoint}#{tool}:inbound",
-                            request_params=inbound_args,
-                        ),
-                    ]
+                outbound_pages, outbound_stats = self._fetch_pages(
+                    mcp, tool, outbound_args, props, paginate=paginate
                 )
+                inbound_pages, inbound_stats = self._fetch_pages(
+                    mcp, tool, inbound_args, props, paginate=paginate
+                )
+                for label, collected in (
+                    ("outbound", outbound_pages),
+                    ("inbound", inbound_pages),
+                ):
+                    raw_artifacts.extend(
+                        RawArtifact(
+                            payload=payload,
+                            endpoint=f"{self.endpoint}#{tool}:{label}",
+                            request_params=call_args,
+                        )
+                        for call_args, payload in collected
+                    )
                 offers = self._combine_one_way(
-                    outbound_payload, inbound_payload, query, offer_type, mcp=mcp
+                    [payload for _, payload in outbound_pages],
+                    [payload for _, payload in inbound_pages],
+                    query,
+                    offer_type,
+                    mcp=mcp,
                 )
+                page_stats = {"outbound": outbound_stats, "inbound": inbound_stats}
+                truncated = bool(outbound_stats["truncated"] or inbound_stats["truncated"])
 
             return ConnectorResult(
                 source_code=self.code,
@@ -553,7 +659,12 @@ class TutuMcpConnector(BaseConnector):
                 raw_artifacts=raw_artifacts,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 connector_version=self.version,
-                diagnostics={"tool": tool, "mapped_args": sorted(args)},
+                is_partial=truncated,
+                diagnostics={
+                    "tool": tool,
+                    "mapped_args": sorted(args),
+                    "pagination": page_stats,
+                },
             )
 
     def _rail_class_prices(self, mcp: McpClient, offer: dict[str, Any]) -> dict[str, Decimal]:
@@ -569,6 +680,13 @@ class TutuMcpConnector(BaseConnector):
         """
         details_ref = offer.get("details_ref")
         if not isinstance(details_ref, dict) or self._seatmap_budget <= 0:
+            return {}
+        # Перебор карт мест — самая длинная часть сбора ЖД: до 16 обращений
+        # примерно по 8,5 секунды. Когда бюджет времени вышел, он прекращается,
+        # а поезда остаются в выборке с ценой «от» из поиска: неполные данные
+        # лучше, чем снятая по таймауту задача, которая теряет все.
+        if self.context.budget_exhausted:
+            self.log.info("Карта мест пропущена: исчерпан бюджет времени сбора")
             return {}
         if self.TOOL_RAIL_SEATMAP not in self._tool_schemas:
             return {}
@@ -715,23 +833,30 @@ class TutuMcpConnector(BaseConnector):
 
     def _combine_one_way(
         self,
-        outbound_payload: Any,
-        inbound_payload: Any,
+        outbound_payloads: list[Any],
+        inbound_payloads: list[Any],
         query,  # noqa: ANN001
         offer_type: OfferType,
         mcp: McpClient | None = None,
     ) -> list[Any]:
         """Собирает round-trip из двух односторонних выдач.
 
+        Каждое плечо может прийти несколькими страницами — они разбираются
+        подряд и складываются в одну выборку до комбинирования.
+
         Комбинируются только сопоставимые варианты (для ЖД — одного типа
         вагона), число комбинаций ограничено, чтобы не раздувать выборку.
         """
-        outbound = self._parse_transport(
-            outbound_payload, query, offer_type, round_trip=False, mcp=mcp
-        )
-        inbound = self._parse_transport(
-            inbound_payload, query, offer_type, round_trip=False, mcp=mcp
-        )
+        outbound: list[Any] = []
+        for payload in outbound_payloads:
+            outbound.extend(
+                self._parse_transport(payload, query, offer_type, round_trip=False, mcp=mcp)
+            )
+        inbound: list[Any] = []
+        for payload in inbound_payloads:
+            inbound.extend(
+                self._parse_transport(payload, query, offer_type, round_trip=False, mcp=mcp)
+            )
         if not outbound or not inbound:
             return []
 
@@ -803,26 +928,44 @@ class TutuMcpConnector(BaseConnector):
                 self._set_arg(args, props, "meals", [TUTU_MEAL_FILTER[query.meal_type]])
             if query.cancellation_filter == "FREE_CANCELLATION":
                 self._set_arg(args, props, "free_cancellation", True)
+            # Массовый сегмент — гостиницы. Апартаменты и хостелы отсекаются на
+            # стороне источника, чтобы не занимать ими страницу выдачи.
+            hotel_types = self.context.config.get(
+                "hotel_types", list(TUTU_MASS_MARKET_HOTEL_TYPES)
+            )
+            if hotel_types:
+                self._set_arg(args, props, "hotel_types", list(hotel_types))
             self._set_arg(args, props, "per_page", int(self.context.config.get("per_page", 50)))
 
-            payload = mcp.call_tool(self.TOOL_HOTELS, args)
-            offers = self._parse_hotels(payload, query)
+            pages, page_stats = self._fetch_pages(
+                mcp, self.TOOL_HOTELS, args, props, paginate=True
+            )
+            offers: list[ProviderAccommodationOffer] = []
+            raw_artifacts: list[RawArtifact] = []
+            for call_args, payload in pages:
+                raw_artifacts.append(
+                    RawArtifact(
+                        payload=payload,
+                        endpoint=f"{self.endpoint}#{self.TOOL_HOTELS}",
+                        request_params=call_args,
+                    )
+                )
+                offers.extend(self._parse_hotels(payload, query))
 
             return ConnectorResult(
                 source_code=self.code,
                 offer_type=OfferType.ACCOMMODATION,
                 outcome=ConnectorOutcome.SUCCESS if offers else ConnectorOutcome.EMPTY,
                 offers=offers,
-                raw_artifacts=[
-                    RawArtifact(
-                        payload=payload,
-                        endpoint=f"{self.endpoint}#{self.TOOL_HOTELS}",
-                        request_params=args,
-                    )
-                ],
+                raw_artifacts=raw_artifacts,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 connector_version=self.version,
-                diagnostics={"tool": self.TOOL_HOTELS, "mapped_args": sorted(args)},
+                is_partial=bool(page_stats["truncated"]),
+                diagnostics={
+                    "tool": self.TOOL_HOTELS,
+                    "mapped_args": sorted(args),
+                    "pagination": page_stats,
+                },
             )
 
     def _parse_hotels(
@@ -840,6 +983,10 @@ class TutuMcpConnector(BaseConnector):
         nights = _as_int(stay.get("nights")) or query.nights or 1
         check_in = parse_date(stay.get("check_in")) or query.check_in
         check_out = parse_date(stay.get("check_out")) or query.check_out
+        # Ссылка на ту же выдачу у источника — общая для страницы. По ней цену
+        # проверяют руками за полминуты; без нее сверка с сайтом упирается в
+        # ручной подбор параметров поиска.
+        search_url = _first_str(payload, "search_results_url", "search_url")
 
         offers: list[ProviderAccommodationOffer] = []
         for hotel in _extract_offer_list(payload):
@@ -881,8 +1028,15 @@ class TutuMcpConnector(BaseConnector):
                     cancellation_raw=_cancellation_text(best),
                     review_score=_as_float(hotel.get("rating")),
                     review_count=_as_int(hotel.get("review_count")),
-                    deeplink=_first_str(best, "checkout_url") or _first_str(hotel, "checkout_url"),
-                    source_payload={"alias": hotel.get("alias")},
+                    deeplink=(
+                        _first_str(best, "checkout_url")
+                        or _first_str(hotel, "checkout_url")
+                        or search_url
+                    ),
+                    source_payload={
+                        "alias": hotel.get("alias"),
+                        "search_results_url": search_url,
+                    },
                 )
             )
         return offers

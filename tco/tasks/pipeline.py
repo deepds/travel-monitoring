@@ -49,9 +49,11 @@ from tco.services.calculation import (
 )
 from tco.engine.fingerprint import cache_key as build_cache_key
 from tco.services.snapshot_builder import (
-    collect_into_snapshot,
     create_snapshot,
+    execute_collection,
     finalize_snapshot,
+    persist_collection,
+    plan_collection,
     transport_offer_type_for,
 )
 
@@ -96,6 +98,20 @@ def collect_accommodation_offers(
 
 
 def _collect_component(snapshot_id: str, profile_id: str | None, component: str) -> dict[str, Any]:
+    """Сбор одной компоненты в три фазы, каждая — своя транзакция.
+
+    Обращение к источникам вынесено из транзакции намеренно. Прежде вся задача
+    работала внутри одной ``session_scope()``: снимок создавался до сбора, а
+    коммит наступал после всех обращений. Внутри при этом работал ограничитель
+    темпа — до 32 одновременных запросов при лимите 240 в минуту, — и потоки
+    ждали в нем с открытой транзакцией. На стенде это давало ``idle in
+    transaction`` по 16 минут, за которыми выстраивалась очередь блокировок и
+    вставал весь воркер.
+
+    Побочная выгода: падение воркера в момент сбора теперь безопасно. Терять
+    нечего, кроме самого обращения, — снимок остается собираемым заново.
+    """
+    # Фаза 1. Что собирать и у кого.
     with session_scope() as session:
         snapshot = session.get(MarketSnapshot, uuid.UUID(str(snapshot_id)))
         if snapshot is None:
@@ -121,14 +137,22 @@ def _collect_component(snapshot_id: str, profile_id: str | None, component: str)
                 "skipped": "компонента не наблюдается сценарием",
             }
 
-        result = collect_into_snapshot(
+        plan = plan_collection(
             session, snapshot, scenario, rules=rules, offer_types=offer_types
         )
+
+    # Фаза 2. Сеть. Транзакции нет.
+    outcome = execute_collection(plan, rules=rules)
+
+    # Фаза 3. Запись.
+    with session_scope() as session:
+        result = persist_collection(session, plan, outcome, rules=rules)
         return {
-            "snapshot_id": str(snapshot.id),
+            "snapshot_id": str(plan.snapshot_id),
             "component": component,
             "offers": len(result.offers),
             "errors": len(result.errors),
+            "budget_exhausted": outcome.budget_exhausted,
         }
 
 

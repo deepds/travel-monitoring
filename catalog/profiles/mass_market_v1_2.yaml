@@ -1,0 +1,144 @@
+# Методика витрины вариантов отдыха, версия 1.2.0.
+#
+# ЧТО ИЗМЕНИЛОСЬ ПРОТИВ 1.1.0
+#
+# Из выборки по проживанию исключены апартаменты и хостелы — по прямому
+# указанию руководителя. Это другой продукт с другой ценой: в казанской
+# выдаче апартаменты идут по 12–14 тысяч рублей за ночь при медиане отелей
+# около семи, и их доля там 158 предложений из 1682 (9,4 %) против 3 из 2318
+# (0,1 %) в московской. Смешанная выборка описывала бы не гостиничный рынок
+# города, а его смесь с арендой квартир, причем в разных городах в разной
+# пропорции — то есть города переставали быть сопоставимыми между собой.
+#
+# Отсечение идет в два приема, и оба нужны:
+#
+#   1. На стороне источника — аргументом `hotel_types` поиска (коннектор
+#      1.1.0). Страница выдачи ограничена тридцатью объектами, и каждый
+#      апартамент в ней вытесняет отель, которого мы уже не увидим. Отбор у
+#      себя эту потерю не вернул бы.
+#
+#   2. На стороне методики — правилом `accommodation_excluded_room_keywords`.
+#      Нужно потому, что проверить первый прием нечем: тип объекта источник в
+#      ответе не возвращает вовсе (поле пусто у всех 84 объектов казанской
+#      выдачи). Единственный доходящий до нас признак — название категории
+#      номера, по нему и идет контроль.
+#
+# Правило написано как список подстрок, а не как жесткая классификация:
+# названия категорий у источника свободные, и закрытый перечень значений
+# устарел бы на первом же новом варианте написания. Предложение без названия
+# категории не отбраковывается — иначе терялись бы обычные отели там, где
+# выдача беднее.
+#
+# Отбор по классу обслуживания купе остается снятым (см. 1.1.0), невозвратные
+# и прямые авиарейсы — остаются требованием постановки.
+
+code: mass-market
+name: Витрина вариантов отдыха
+version: "1.2.0"
+status: ACTIVE
+description: >
+  Методика массового сегмента для витрины по пяти ключевым городам:
+  гостиницы без апартаментов и хостелов, невозвратные прямые авиарейсы,
+  отсечка ценовых всплесков. Купе и плацкарт агрегируются раздельно типом
+  вагона. Пороги качества, агрегация и допуск источников совпадают с базовой
+  методикой.
+
+rules:
+  filters:
+    require_base_currency: true
+    min_price: 1.0
+    max_price: null
+    require_capacity_confirmation: true
+    strict_baggage_classification: true
+    stars_exact_match: true
+    meal_at_least_requested: true
+    max_stops: null
+    enforce_cancellation_filter: true
+    allow_synthetic_sources: false
+    rail_service_classes: []
+    flights_non_refundable_only: true
+    flights_direct_only: true
+    # Подстроки названия категории номера, по которым предложение опознается
+    # как немассовое размещение. Сравнение без учета регистра.
+    accommodation_excluded_room_keywords:
+      - апартамент
+      - апарт-
+      - апартс
+      - apartment
+      - apart
+      - студия с кухней
+      - хостел
+      - hostel
+      - койко-место
+      - место в номере
+      - кровать в
+      - dorm
+
+  eligibility:
+    min_valid_offers: 5
+    max_data_age_minutes: 120
+    max_invalid_offer_ratio: 0.30
+    max_unclassified_fare_ratio: 0.40
+    count_unreported_as_unclassified: false
+    min_offers_after_dedup: 3
+    min_offers_after_dedup_rail: 2
+    require_successful_call: true
+    min_source_confidence: null
+
+  outliers:
+    method: IQR
+    iqr_multiplier: 1.5
+    min_sample_size: 4
+    scope: PER_SOURCE
+    max_outlier_ratio: 0.4
+
+  aggregation:
+    per_source_statistic: MEDIAN
+    trim_ratio: 0.1
+    cross_source_method: MEDIAN_OF_MEDIANS
+    two_source_method: MEAN
+    percentile_method: LINEAR
+    high_disagreement_threshold: 0.30
+    allow_single_source: true
+
+  quality:
+    weights:
+      component_completeness: 0.30
+      source_count: 0.20
+      offer_count: 0.15
+      source_agreement: 0.15
+      freshness: 0.10
+      connector_stability: 0.10
+    partial_success_threshold: 60.0
+    target_source_count: 2
+    target_offer_count: 20
+    single_source_agreement_score: 0.5
+    default_connector_stability: 0.8
+    stability_window_days: 30
+
+  confidence:
+    high_min_quality: 80.0
+    medium_min_quality: 60.0
+    low_min_quality: 40.0
+    high_min_sources_per_component: 2
+    high_max_disagreement: 0.15
+    high_min_source_confidence: 60.0
+    max_unclassified_ratio: 0.40
+
+  limits:
+    source_soft_timeout_seconds: 20.0
+    source_hard_timeout_seconds: 30.0
+    on_demand_total_timeout_seconds: 60.0
+    max_retries: 2
+    max_offers_per_source: 300
+    result_cache_ttl_minutes: 45
+
+  transport_pricing:
+    rail_child_fare_ratio: 1.0
+    rail_child_max_age: 9
+    max_roundtrip_combinations: 64
+    roundtrip_legs_per_direction: 8
+
+  allowed_source_codes: []
+  excluded_source_codes: []
+  rounding_digits: 0

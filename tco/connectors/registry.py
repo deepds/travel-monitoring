@@ -88,6 +88,8 @@ def build_context(
     max_retries: int | None = None,
     html_storage_allowed: bool = False,
     observation_seed: str = "",
+    deadline: float | None = None,
+    max_pages: int | None = None,
 ) -> ConnectorContext:
     settings = settings or get_settings()
     cls = connector_class(code)
@@ -110,6 +112,8 @@ def build_context(
         is_synthetic=cls.is_synthetic,
         html_storage_allowed=html_storage_allowed,
         request_id=request_id,
+        deadline=deadline,
+        max_pages=max_pages if max_pages is not None else settings.collection_max_pages,
     )
 
 

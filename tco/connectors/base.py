@@ -53,6 +53,28 @@ class ConnectorContext:
     is_synthetic: bool = False
     html_storage_allowed: bool = False
     request_id: str = ""
+    #: Момент по ``time.monotonic()``, после которого коннектор прекращает
+    #: добирать данные и возвращает собранное. ``None`` — без ограничения.
+    #:
+    #: Нужен потому, что предел времени задачи Celery снимает ее целиком —
+    #: вместе с уже полученными предложениями. Внутренний бюджет позволяет
+    #: остановить перебор (страницы выдачи, карты мест) добровольно и сохранить
+    #: то, что успели собрать, пометив результат частичным.
+    deadline: float | None = None
+    #: Сколько страниц выдачи дочитывать там, где источник ее разбивает.
+    #: Единица — прежнее поведение: только первая страница.
+    max_pages: int = 1
+
+    @property
+    def budget_exhausted(self) -> bool:
+        """Бюджет времени исчерпан — перебор пора прекращать."""
+        return self.deadline is not None and time.monotonic() >= self.deadline
+
+    def seconds_left(self) -> float | None:
+        """Сколько времени осталось; ``None`` — бюджет не задан."""
+        if self.deadline is None:
+            return None
+        return max(0.0, self.deadline - time.monotonic())
 
 
 class BaseConnector(ABC):

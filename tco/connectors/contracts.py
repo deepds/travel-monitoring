@@ -280,6 +280,11 @@ class ConnectorResult:
     error_message: str | None = None
     connector_version: str = "1.0.0"
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    #: Сбор прерван добровольно — по бюджету времени или по потолку выдачи
+    #: источника. Предложения при этом настоящие, но выборка неполна, и
+    #: показатель по ней описывает рынок хуже обычного. Отличается от ошибки:
+    #: обращение состоялось и данные получены.
+    is_partial: bool = False
 
     @property
     def is_success(self) -> bool:

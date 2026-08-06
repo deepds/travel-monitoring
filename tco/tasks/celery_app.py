@@ -90,51 +90,94 @@ _snapshot_hours = (
 _snapshot_expires = max(300, _interval_hours * 3600 - 300)
 
 celery_app.conf.beat_schedule = {
-    # Наблюдение разведено по частоте тегом `cadence:daily`.
+    # РАСПИСАНИЕ СУТОЧНОГО ЦИКЛА
     #
-    # По общему интервалу — направления, ради которых платформа и заводилась.
-    # Раз в сутки — все остальное: сетка витрины (она на порядок больше, и в
-    # часовом прогоне давала бы 42 тысячи обращений к источникам в сутки) и
-    # направления вне пятерки ключевых городов, где суточного шага достаточно.
-    # Суточный прогон, в свою очередь, разделен по компонентам — см. ниже.
+    # Окна разнесены по компонентам и по времени с запасом: одновременный залп
+    # 6 августа и открыл размыкатель цепи — 1758 сценариев разом источник не
+    # выдерживает. Тот же набор, собранный по частям, прошел без единого
+    # срабатывания.
+    #
+    #   00:30  достройка сетки на новый день горизонта      10 мин
+    #   01:00  ЖД                                600 сценариев, 2 ч
+    #   03:30  авиа                               600 сценариев, 2 ч
+    #   06:00  проживание, однодневные            450 сценариев, 1,5 ч
+    #   08:00  проживание, контрольные пятидневные 45 сценариев, 15 мин
+    #   09:00  досбор дыр                         сколько осталось, 1 ч
+    #   10:00  сводка качества за сутки
+    #
+    # К десяти утра все закончено, дальше четырнадцать часов запаса: если ночь
+    # прошла плохо, есть время повторить до следующих суток, а не ждать их.
+    # Каждое окно шире ожидаемой длительности, поэтому затянувшийся прогон не
+    # получает следующий себе в спину.
+    #
+    # Часовое наблюдение каталога остается для сценариев без тега `cadence:daily`.
     "monitoring-snapshot": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="5", hour=_snapshot_hours),
         "options": {"queue": "compute", "expires": _snapshot_expires},
         "kwargs": {"without_tag": "cadence:daily"},
     },
-    # Суточный прогон разнесен на два: проезд в час ночи, проживание в два.
-    #
-    # Одним залпом это 1758 сценариев, и источник такого не выдерживает: на
-    # прогоне 6 августа размыкатель цепи открылся в середине, и проживание —
-    # оно собирается только у Туту — осталось без сбора по 395 сценариям из
-    # 465. Тот же набор, собранный отдельно, прошел без единого срабатывания
-    # размыкателя: 1154 успешных обращения.
-    #
-    # Час разрыва берется с запасом: проезд укладывается примерно в сорок
-    # минут, и если он затянется, проживание встанет в очередь за ним, а не
-    # рядом с ним.
-    #
-    # Оба прогона попадают в одно часовое окно идемпотентности, но получают
-    # разные задачи: область отбора входит в ключ.
-    "monitoring-snapshot-daily": {
-        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
-        "schedule": crontab(minute="0", hour="1"),
-        "options": {"queue": "compute", "expires": 20 * 3600},
-        "kwargs": {"with_tag": "cadence:daily", "without_tag": "showcase-accommodation"},
-    },
-    "monitoring-snapshot-daily-accommodation": {
-        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
-        "schedule": crontab(minute="0", hour="2"),
-        "options": {"queue": "compute", "expires": 20 * 3600},
-        "kwargs": {"with_tag": "showcase-accommodation"},
-    },
-    # Раньше планового сбора: сетка должна быть достроена к моменту, когда
+    # Раньше всего остального: сетка должна быть достроена к моменту, когда
     # начнется наблюдение, иначе самая дальняя дата горизонта пропустит сутки.
     "observation-grid-daily": {
         "task": "tco.monitoring.maintain_observation_grid",
         "schedule": crontab(minute="30", hour="0"),
         "options": {"queue": "maintenance"},
+    },
+    # Проезд разделен на ЖД и авиа: у них разные инструменты источника и разная
+    # длительность обращения (ЖД добирает карту мест на каждый поезд), и общий
+    # прогон упирался бы в темп там, где раздельный проходит.
+    "monitoring-daily-rail": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="0", hour="1"),
+        "options": {"queue": "compute", "expires": 2 * 3600},
+        "kwargs": {"with_tag": "showcase-rail"},
+    },
+    "monitoring-daily-avia": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="30", hour="3"),
+        "options": {"queue": "compute", "expires": 2 * 3600},
+        "kwargs": {"with_tag": "showcase-avia"},
+    },
+    # Однодневные брони — основной ряд наблюдений проживания: одна точка это
+    # одна ночь и один день недели, поэтому недельная волна на графике видна.
+    "monitoring-daily-accommodation": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="0", hour="6"),
+        "options": {"queue": "compute", "expires": 2 * 3600},
+        "kwargs": {"with_tag": "showcase-stay-1n"},
+    },
+    # Пятидневные брони остались контрольными: витрине они не нужны, но именно
+    # они показывают, насколько оценка «ночь × число ночей» расходится с ценой
+    # реальной брони. Три даты из тридцати на город вместо всех.
+    "monitoring-daily-accommodation-control": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="0", hour="8"),
+        "options": {"queue": "compute", "expires": 3600},
+        "kwargs": {"with_tag": "showcase-stay-5n"},
+    },
+    # Досбор — штатный шаг цикла, а не аварийная мера. Сценарии, где источник
+    # ответил TIMEOUT или CIRCUIT_OPEN, попадают сюда автоматически: к девяти
+    # утра размыкатель остывает (900 секунд по умолчанию).
+    "monitoring-backfill": {
+        "task": "tco.monitoring.backfill_missing_observations",
+        "schedule": crontab(minute="0", hour="9"),
+        "options": {"queue": "maintenance", "expires": 3600},
+    },
+    # Итог суток на экран «Покрытие и качество»: прогон, потерявший больше 5 %
+    # сценариев, должен быть виден без чтения логов.
+    "daily-collection-report": {
+        "task": "tco.metrics.daily_collection_report",
+        "schedule": crontab(minute="0", hour="10"),
+        "options": {"queue": "maintenance"},
+    },
+    # Сторож застрявшего сбора. Живет в очереди обслуживания, то есть в том
+    # воркере, который сбором не занят: забитый пул иначе не выполнил бы и
+    # собственного лечения.
+    "watch-collection-progress": {
+        "task": "tco.maintenance.watch_collection_progress",
+        "schedule": crontab(minute="*/5"),
+        "options": {"queue": "maintenance", "expires": 240},
     },
     "source-health-check-hourly": {
         "task": "tco.source.health_check_all_sources",

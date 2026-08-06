@@ -14,9 +14,29 @@
 
 * транспорт — 20 направленных маршрутов между пятью городами, отдельно ЖД и
   авиа, туда-обратно, без проживания;
-* проживание — пять городов в трех категориях звездности, без транспорта.
+* проживание — пять городов в трех категориях звездности, **бронь на одну
+  ночь**, без транспорта.
 
-Итого 55 сценариев на дату, 1650 на горизонт в 30 дней.
+Итого 55 сценариев на дату, 1650 на горизонт в 30 дней, плюс 45 контрольных
+пятидневных броней — всего 1695.
+
+ПОЧЕМУ БРОНЬ НА ОДНУ НОЧЬ, А НЕ НА ПЯТЬ
+
+Пятидневная бронь дает цену ночи усреднением: заезд в среду означает, что в
+брони среда, четверг, пятница, суббота и воскресенье сразу. На графике по
+датам заезда это размазывает недельную волну — дорогие выходные разносятся на
+пять соседних точек, — и вопрос «когда в городе дорого» такой график не
+отвечает. Однодневная бронь дает одну точку на одну ночь и один день недели.
+
+Пятидневные брони остались контрольными: витрине они не нужны — цена поездки
+считается как ночь × число ночей, — но именно они показывают, насколько эта
+оценка расходится с ценой реальной брони. Отели продают короткие брони дороже,
+и величину расхождения нельзя предполагать, ее надо наблюдать. Трех дат из
+тридцати на город для этого достаточно: 45 сценариев вместо 450.
+
+Коэффициент пересчета одного в другое не вводится намеренно. Это та же ошибка,
+от которой проект отказался с предкорзинными ценами Туту: собственная оценка,
+выданная за наблюдение.
 """
 
 from __future__ import annotations
@@ -51,10 +71,28 @@ SHOWCASE_CITIES: tuple[str, ...] = ("MOW", "LED", "AER", "KUF", "KZN")
 #: Горизонт наблюдения в днях.
 HORIZON_DAYS = 30
 
-#: Длительность поездки. Одна на всю сетку: перебирать еще и длительность
-#: значило бы умножить объем наблюдений на число вариантов, а витрина
-#: сравнивает направления между собой, а не поездки разной длины.
+#: Длительность поездки для транспорта. Одна на всю сетку: перебирать еще и
+#: длительность значило бы умножить объем наблюдений на число вариантов, а
+#: витрина сравнивает направления между собой, а не поездки разной длины.
 CANONICAL_NIGHTS = 5
+
+#: Длительность основной брони проживания. Одна ночь — потому что одна точка
+#: графика должна означать одну ночь и один день недели (см. модуль).
+STAY_NIGHTS = 1
+
+#: Смещения от сегодняшнего дня, на которые ставятся контрольные пятидневные
+#: брони. Три из тридцати и намеренно разных дней недели: расхождение между
+#: «ценой ночи в длинной брони» и «ценой одной ночевки» само зависит от дня
+#: недели, и три одинаковых дня его не измерили бы.
+CONTROL_STAY_OFFSETS: tuple[int, ...] = (7, 15, 26)
+
+#: Теги, по которым расписание разводит прогоны по времени. Один залп из 1695
+#: сценариев источник не выдерживает — именно это открыло размыкатель цепи
+#: 6 августа.
+RAIL_TAG = "showcase-rail"
+AVIA_TAG = "showcase-avia"
+STAY_TAG = "showcase-stay-1n"
+CONTROL_STAY_TAG = "showcase-stay-5n"
 
 #: Категории размещения. Третья звезда — массовый сегмент и основа графиков,
 #: четвертая и пятая нужны выбору категории в первом блоке.
@@ -83,6 +121,10 @@ class GridReport:
     retired: int = 0
     #: Сколько сценариев переведено на действующую версию методики витрины.
     reprofiled: int = 0
+    #: Сколько существующих получили недостающие теги расписания.
+    retagged: int = 0
+    #: Сколько снято с наблюдения как выбывшие из состава сетки.
+    dropped: int = 0
     horizon_until: date | None = None
     profile_missing: bool = False
 
@@ -92,6 +134,8 @@ class GridReport:
             "existing": self.existing,
             "retired": self.retired,
             "reprofiled": self.reprofiled,
+            "retagged": self.retagged,
+            "dropped": self.dropped,
             "horizon_until": self.horizon_until.isoformat() if self.horizon_until else None,
             "profile_missing": self.profile_missing,
         }
@@ -122,26 +166,29 @@ def _transport_drafts(origin: str, destination: str, departure: date) -> list[Sc
         "meal_type": MealType.ANY,
         "cancellation_filter": CancellationFilter.ANY,
         "scenario_type": ScenarioType.MONITORING,
-        "tags": [GRID_TAG, DAILY_CADENCE_TAG, "showcase-transport"],
     }
     return [
         ScenarioDraft(
             transport_type=TransportType.RAIL,
             flight_fare_type=None,
             rail_class=RailClass.COMPARTMENT,
+            tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-transport", RAIL_TAG],
             **common,
         ),
         ScenarioDraft(
             transport_type=TransportType.AVIA,
             flight_fare_type=FlightFareType.CHEAPEST,
             rail_class=None,
+            tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-transport", AVIA_TAG],
             **common,
         ),
     ]
 
 
-def _accommodation_drafts(city: str, check_in: date) -> list[ScenarioDraft]:
-    check_out = check_in + timedelta(days=CANONICAL_NIGHTS)
+def _accommodation_drafts(
+    city: str, check_in: date, *, nights: int, tag: str
+) -> list[ScenarioDraft]:
+    check_out = check_in + timedelta(days=nights)
     return [
         ScenarioDraft(
             origin_city_code=_accommodation_origin(city),
@@ -157,7 +204,9 @@ def _accommodation_drafts(city: str, check_in: date) -> list[ScenarioDraft]:
             meal_type=MealType.ANY,
             cancellation_filter=CancellationFilter.ANY,
             scenario_type=ScenarioType.MONITORING,
-            tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-accommodation"],
+            # Прежний общий тег сохранен: по нему сетку отличают журналы и уже
+            # выгруженные слепки. Новый разводит прогоны по времени.
+            tags=[GRID_TAG, DAILY_CADENCE_TAG, "showcase-accommodation", tag],
         )
         for stars in SHOWCASE_STARS
     ]
@@ -171,7 +220,21 @@ def grid_drafts(*, today: date, horizon_days: int = HORIZON_DAYS) -> list[Scenar
         for origin, destination in permutations(SHOWCASE_CITIES, 2):
             drafts.extend(_transport_drafts(origin, destination, day))
         for city in SHOWCASE_CITIES:
-            drafts.extend(_accommodation_drafts(city, day))
+            drafts.extend(
+                _accommodation_drafts(city, day, nights=STAY_NIGHTS, tag=STAY_TAG)
+            )
+
+    # Контрольные пятидневные брони — на три даты из тридцати, не на все.
+    for offset in CONTROL_STAY_OFFSETS:
+        if offset > horizon_days:
+            continue
+        day = today + timedelta(days=offset)
+        for city in SHOWCASE_CITIES:
+            drafts.extend(
+                _accommodation_drafts(
+                    city, day, nights=CANONICAL_NIGHTS, tag=CONTROL_STAY_TAG
+                )
+            )
     return drafts
 
 
@@ -205,12 +268,22 @@ def maintain_grid(
         report.profile_missing = True
         return report
 
+    wanted: set[str] = set()
     for draft in grid_drafts(today=today, horizon_days=horizon_days):
         scenario, created = create_scenario(session, draft, profile=profile, created_by="grid")
         # Признак ставится и существующим: сетка опознается по отпечатку, и
         # сценарий, заведенный до появления поля, иначе остался бы неотмеченным
         # и продолжил бы попадать в агрегаты рынка.
         scenario.is_showcase_grid = True
+        wanted.add(scenario.fingerprint)
+        # Теги существующего дополняются, а не переписываются: по ним расписание
+        # разводит прогоны по времени, и сценарий, заведенный до появления
+        # нового тега, иначе не попал бы ни в одно окно и молча выпал бы из
+        # наблюдения. В отпечаток теги не входят, поэтому дополнение безопасно.
+        missing_tags = [tag for tag in draft.tags if tag not in (scenario.tags or [])]
+        if missing_tags:
+            scenario.tags = list(scenario.tags or []) + missing_tags
+            report.retagged += 1
         if created:
             report.created += 1
         else:
@@ -232,8 +305,47 @@ def maintain_grid(
         scenario.calculation_profile_id = profile.id
     report.reprofiled = len(stale)
 
+    report.dropped = retire_out_of_grid(session, wanted, today=today, horizon_days=horizon_days)
     report.retired = retire_expired(session, today=today)
     return report
+
+
+def retire_out_of_grid(
+    session: Session,
+    wanted: set[str],
+    *,
+    today: date,
+    horizon_days: int = HORIZON_DAYS,
+) -> int:
+    """Снимает с наблюдения сценарии сетки, выбывшие из ее состава.
+
+    Нужно при изменении самого состава — например, когда пятидневные брони
+    проживания перестали наблюдаться на каждую дату и остались только
+    контрольными. Без этого прежние 450 сценариев продолжали бы собираться
+    молча: они активны, помечены сеткой и попадают в суточный прогон, а бюджет
+    обращений к источнику при этом удваивается.
+
+    Отбор ограничен горизонтом: даты за его пределами снимает ``retire_expired``
+    по своему правилу, и трогать их здесь незачем.
+    """
+    # Пустой состав снял бы с наблюдения всю сетку целиком. Это не бывает
+    # штатно и означало бы ошибку в вызывающем коде, а не выбывшие сценарии.
+    if not wanted:
+        return 0
+
+    horizon = today + timedelta(days=horizon_days)
+    obsolete = session.scalars(
+        select(TravelScenario)
+        .where(TravelScenario.deleted_at.is_(None))
+        .where(TravelScenario.is_showcase_grid.is_(True))
+        .where(TravelScenario.departure_date >= today)
+        .where(TravelScenario.departure_date <= horizon)
+        .where(TravelScenario.fingerprint.not_in(wanted))
+    ).all()
+
+    for scenario in obsolete:
+        soft_delete_scenario(scenario)
+    return len(obsolete)
 
 
 def retire_expired(session: Session, *, today: date | None = None) -> int:

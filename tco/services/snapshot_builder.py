@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -59,11 +60,68 @@ logger = get_logger(__name__)
 
 @dataclass(slots=True)
 class CollectionTask:
-    """Одно обращение: источник × тип предложений."""
+    """Одно обращение: источник × тип предложений.
 
-    source: Source
+    Источник описан значениями, а не ORM-объектом: обращение к сети идет вне
+    транзакции, а ленивое поле отсоединенного объекта в этот момент открыло бы
+    новую — ровно то, от чего разделение фаз и уходит.
+    """
+
+    source_id: uuid.UUID
+    source_code: str
+    source_name: str
+    is_synthetic: bool
+    storage_allowed: bool
+    html_storage_allowed: bool
+    allowed_hosts: list[str]
+    config: dict[str, Any]
     offer_type: OfferType
-    query: TransportQuery | AccommodationQuery
+    query: TransportQuery | AccommodationQuery | None = None
+    #: Заполнено у пропущенных: до какого момента разомкнут размыкатель цепи.
+    circuit_open_until: datetime | None = None
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.source_code, self.offer_type.value)
+
+
+@dataclass(slots=True)
+class CollectionPlan:
+    """Что предстоит собрать — без единой ссылки на сессию.
+
+    Существует потому, что сбор нельзя вести внутри открытой транзакции.
+    Прежде ``collect_into_snapshot`` вызывался внутри ``session_scope()``:
+    снимок создавался до сбора, а коммит наступал после всех обращений к
+    источникам. Внутри при этом работал ограничитель темпа — 4 процесса по 8
+    потоков против лимита 240 запросов в минуту, — и потоки ждали в лимитере с
+    открытой транзакцией. На стенде это давало ``idle in transaction`` по
+    16 минут, за которыми выстраивалась очередь блокировок и вставал весь
+    воркер.
+
+    Теперь фаз три: короткая транзакция на подготовку, сбор без транзакции,
+    короткая транзакция на запись. Заодно падение воркера в момент сбора
+    перестает быть опасным: терять нечего, кроме самого обращения.
+    """
+
+    snapshot_id: uuid.UUID
+    scenario_id: uuid.UUID
+    scenario_code: str
+    observed_at: datetime
+    tasks: list[CollectionTask] = field(default_factory=list)
+    #: Источники, которые не опрашиваются: разомкнут размыкатель цепи.
+    skipped: list[CollectionTask] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class CollectionOutcome:
+    """Итог фазы обращения к источникам."""
+
+    results: dict[tuple[str, str], ConnectorResult] = field(default_factory=dict)
+    #: Фактический момент обращения — один на снимок. От него, а не от метки
+    #: часового окна, считается свежесть данных при допуске источника.
+    fetched_at: datetime = field(default_factory=utcnow)
+    #: Бюджет времени вышел до конца обхода.
+    budget_exhausted: bool = False
 
 
 @dataclass(slots=True)
@@ -210,27 +268,29 @@ def _source_ids(city, source_code: str) -> dict[str, Any]:  # noqa: ANN001
 
 
 def _make_connector(
-    source: Source,
+    task: CollectionTask,
     settings: Settings,
     rules: ProfileRules,
     request_id: str,
     observation_seed: str,
+    deadline: float | None,
 ) -> BaseConnector:
     context = build_context(
-        code=source.code,
-        name=source.name,
-        allowed_hosts=source.allowed_hosts,
-        config=dict(source.config or {}),
+        code=task.source_code,
+        name=task.source_name,
+        allowed_hosts=task.allowed_hosts,
+        config=dict(task.config or {}),
         request_id=request_id,
         settings=settings,
         max_offers=rules.limits.max_offers_per_source,
         soft_timeout=rules.limits.source_soft_timeout_seconds,
         hard_timeout=rules.limits.source_hard_timeout_seconds,
         max_retries=rules.limits.max_retries,
-        html_storage_allowed=source.html_storage_allowed,
+        html_storage_allowed=task.html_storage_allowed,
         observation_seed=observation_seed,
+        deadline=deadline,
     )
-    return create_connector(source.code, context)
+    return create_connector(task.source_code, context)
 
 
 def collect_all(
@@ -240,16 +300,26 @@ def collect_all(
     rules: ProfileRules,
     observation_seed: str,
     max_workers: int = 8,
+    deadline: float | None = None,
 ) -> dict[tuple[str, str], ConnectorResult]:
-    """Параллельно опрашивает источники. Исключения наружу не выходят."""
+    """Параллельно опрашивает источники. Исключения наружу не выходят.
+
+    ``deadline`` — момент по ``time.monotonic()``, после которого коннекторы
+    прекращают добирать данные и возвращают собранное. Это бюджет внутри сбора,
+    а не таймаут задачи: предел времени задачи Celery снимает ее целиком вместе
+    с уже полученными предложениями, а бюджет позволяет остановиться
+    добровольно и сохранить их.
+    """
     if not tasks:
         return {}
 
     def run(task: CollectionTask) -> tuple[tuple[str, str], ConnectorResult]:
         request_id = uuid.uuid4().hex
-        connector = _make_connector(task.source, settings, rules, request_id, observation_seed)
+        connector = _make_connector(
+            task, settings, rules, request_id, observation_seed, deadline
+        )
         result = connector.safe_collect(task.offer_type, task.query)
-        return (task.source.code, task.offer_type.value), result
+        return task.key, result
 
     workers = max(1, min(max_workers, len(tasks)))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="collect") as pool:
@@ -384,7 +454,29 @@ def _upsert_source_result(
     )
 
 
-def collect_into_snapshot(
+def _task_from_source(
+    source: Source,
+    offer_type: OfferType,
+    *,
+    scenario: TravelScenario | None = None,
+) -> CollectionTask:
+    """Снимает с источника все нужные значения, пока сессия еще открыта."""
+    return CollectionTask(
+        source_id=source.id,
+        source_code=source.code,
+        source_name=source.name,
+        is_synthetic=bool(source.is_synthetic),
+        storage_allowed=bool(source.storage_allowed),
+        html_storage_allowed=bool(source.html_storage_allowed),
+        allowed_hosts=list(source.allowed_hosts or ()),
+        config=dict(source.config or {}),
+        offer_type=offer_type,
+        query=build_queries(scenario, source, offer_type) if scenario is not None else None,
+        circuit_open_until=source.circuit_open_until,
+    )
+
+
+def plan_collection(
     session: Session,
     snapshot: MarketSnapshot,
     scenario: TravelScenario,
@@ -392,16 +484,13 @@ def collect_into_snapshot(
     rules: ProfileRules,
     offer_types: Sequence[OfferType],
     settings: Settings | None = None,
-    raw_store: RawStore | None = None,
-) -> SnapshotBuildResult:
-    """Собирает указанные типы предложений в существующий снимок.
+) -> CollectionPlan:
+    """Фаза 1: кого спрашивать и о чем. Короткая транзакция.
 
-    Может вызываться параллельно для транспорта и проживания: каждая задача
-    пишет собственные строки offers/raw/metrics и не пересекается с другой.
+    Все, что понадобится дальше, снимается здесь: сама сеть опрашивается уже
+    без открытой транзакции.
     """
     settings = settings or get_settings()
-    raw_store = raw_store or get_raw_store()
-
     selection = eligible_sources(
         session,
         offer_types=offer_types,
@@ -411,27 +500,100 @@ def collect_into_snapshot(
         allowed_codes=rules.allowed_source_codes,
         excluded_codes=rules.excluded_source_codes,
     )
-    tasks = [
-        CollectionTask(
-            source=source,
-            offer_type=offer_type,
-            query=build_queries(scenario, source, offer_type),
-        )
-        for source, offer_type in selection.pairs
-    ]
+    return CollectionPlan(
+        snapshot_id=snapshot.id,
+        scenario_id=scenario.id,
+        scenario_code=scenario.code,
+        observed_at=snapshot.observed_at,
+        tasks=[
+            _task_from_source(source, offer_type, scenario=scenario)
+            for source, offer_type in selection.pairs
+        ],
+        skipped=[
+            _task_from_source(source, offer_type)
+            for source, offer_type in selection.circuit_open
+        ],
+    )
+
+
+def execute_collection(
+    plan: CollectionPlan,
+    *,
+    rules: ProfileRules,
+    settings: Settings | None = None,
+    time_budget_seconds: float | None = None,
+) -> CollectionOutcome:
+    """Фаза 2: обращение к источникам. Без транзакции и без сессии.
+
+    Единственная длительная часть сбора вынесена сюда целиком. Держать на это
+    время открытую транзакцию нельзя: потоки ждут в ограничителе темпа минутами,
+    а база в это время не может ни очистить версии строк, ни пропустить
+    ожидающих за блокировкой.
+    """
+    settings = settings or get_settings()
+    budget = (
+        settings.collection_time_budget_seconds
+        if time_budget_seconds is None
+        else time_budget_seconds
+    )
+    deadline = time.monotonic() + budget if budget and budget > 0 else None
+
     results = collect_all(
-        tasks,
+        plan.tasks,
         settings=settings,
         rules=rules,
-        observation_seed=snapshot.observed_at.isoformat(),
+        observation_seed=plan.observed_at.isoformat(),
         max_workers=settings.monitoring_batch_concurrency,
+        deadline=deadline,
     )
-    # Фактический момент обращения к источникам — один на весь снимок: сбор
-    # идет параллельно и занимает секунды, а дальше следует запись, разнесенная
-    # по времени сохранением raw. Отметка нужна расчету, чтобы считать свежесть
-    # от сбора, а не от метки часового окна: та округлена вниз, и снимок,
-    # закрытый через два часа после начала окна, объявлял себя устаревшим.
-    fetched_at = utcnow()
+    return CollectionOutcome(
+        results=results,
+        # Фактический момент обращения — один на весь снимок: сбор идет
+        # параллельно и занимает секунды, а дальше следует запись, разнесенная
+        # по времени сохранением raw. Отметка нужна расчету, чтобы считать
+        # свежесть от сбора, а не от метки часового окна: та округлена вниз, и
+        # снимок, закрытый через два часа после начала окна, объявлял себя
+        # устаревшим.
+        fetched_at=utcnow(),
+        budget_exhausted=bool(deadline is not None and time.monotonic() >= deadline),
+    )
+
+
+def persist_collection(
+    session: Session,
+    plan: CollectionPlan,
+    outcome: CollectionOutcome,
+    *,
+    rules: ProfileRules,
+    settings: Settings | None = None,
+    raw_store: RawStore | None = None,
+) -> SnapshotBuildResult:
+    """Фаза 3: запись собранного. Короткая транзакция.
+
+    Снимок и сценарий перечитываются по идентификаторам: между фазами
+    транзакции нет, и объекты предыдущей сюда не переносятся.
+    """
+    settings = settings or get_settings()
+    raw_store = raw_store or get_raw_store()
+
+    snapshot = session.get(MarketSnapshot, plan.snapshot_id)
+    if snapshot is None:  # pragma: no cover — снимок создан фазой раньше
+        raise ValueError(f"Снимок {plan.snapshot_id} не найден")
+    scenario = session.get(TravelScenario, plan.scenario_id)
+    if scenario is None:  # pragma: no cover
+        raise ValueError(f"Сценарий {plan.scenario_id} не найден")
+
+    sources = {
+        source.id: source
+        for source in session.scalars(
+            select(Source).where(
+                Source.id.in_([task.source_id for task in (*plan.tasks, *plan.skipped)])
+            )
+        ).all()
+    }
+    tasks = plan.tasks
+    results = outcome.results
+    fetched_at = outcome.fetched_at
 
     persisted_offers: list[Offer] = []
     errors: list[dict[str, Any]] = []
@@ -444,16 +606,16 @@ def collect_into_snapshot(
     contains_synthetic = bool(snapshot.contains_synthetic_data)
 
     for task in tasks:
-        key = (task.source.code, task.offer_type.value)
-        result = results.get(key)
-        if result is None:  # pragma: no cover - защита от рассинхрона
+        result = results.get(task.key)
+        source = sources.get(task.source_id)
+        if result is None or source is None:  # pragma: no cover - защита от рассинхрона
             continue
 
-        connector_versions[task.source.code] = result.connector_version
-        if task.source.code not in source_codes:
-            source_codes.append(task.source.code)
-            source_ids.append(str(task.source.id))
-        if task.source.is_synthetic and result.offers:
+        connector_versions[task.source_code] = result.connector_version
+        if task.source_code not in source_codes:
+            source_codes.append(task.source_code)
+            source_ids.append(str(task.source_id))
+        if task.is_synthetic and result.offers:
             contains_synthetic = True
 
         raw_response = _persist_raw(
@@ -461,7 +623,7 @@ def collect_into_snapshot(
             raw_store,
             snapshot=snapshot,
             scenario=scenario,
-            source=task.source,
+            source=source,
             offer_type=task.offer_type,
             result=result,
             settings=settings,
@@ -475,7 +637,7 @@ def collect_into_snapshot(
             raw_store,
             snapshot=snapshot,
             scenario=scenario,
-            source=task.source,
+            source=source,
             result=result,
             raw_response=raw_response,
             settings=settings,
@@ -487,7 +649,7 @@ def collect_into_snapshot(
         normalized = _normalize_result(
             snapshot=snapshot,
             scenario=scenario,
-            source=task.source,
+            source=source,
             result=result,
             rules=rules,
             settings=settings,
@@ -499,7 +661,7 @@ def collect_into_snapshot(
         persisted_offers.extend(normalized)
 
         stats = _source_stats(result, normalized)
-        collection_summary[f"{task.source.code}:{task.offer_type.value}"] = stats
+        collection_summary[f"{task.source_code}:{task.offer_type.value}"] = stats
 
         # Повторный сбор в то же окно наблюдения переиспользует снимок, а
         # результат источника уникален по тройке снимок-источник-компонента.
@@ -507,9 +669,9 @@ def collect_into_snapshot(
         # падает на уникальном индексе, снимок остается пустой оболочкой, а
         # расчет по нему выходит NO_DATA и перекрывает прежний удачный.
         fields = {
-            "source_code": task.source.code,
-            "source_name": task.source.name,
-            "is_synthetic": task.source.is_synthetic,
+            "source_code": task.source_code,
+            "source_name": task.source_name,
+            "is_synthetic": task.is_synthetic,
             "outcome": result.outcome.value,
             "latency_ms": result.latency_ms,
             "attempts": result.attempts,
@@ -525,11 +687,15 @@ def collect_into_snapshot(
             "connector_version": result.connector_version,
             "collected_at": snapshot.observed_at,
             "fetched_at": fetched_at,
+            # Выдача обрезана: обход прекращен по бюджету времени либо уперся в
+            # потолок страниц. Предложения настоящие, но выборка неполна, и
+            # показатель по ней описывает рынок хуже обычного.
+            "is_partial": bool(result.is_partial),
         }
-        _upsert_source_result(session, snapshot, task.source, task.offer_type, fields)
+        _upsert_source_result(session, snapshot, source, task.offer_type, fields)
         session.add(
             SourceMetric(
-                source_id=task.source.id,
+                source_id=task.source_id,
                 market_snapshot_id=snapshot.id,
                 scenario_id=scenario.id,
                 offer_type=task.offer_type.value,
@@ -549,12 +715,12 @@ def collect_into_snapshot(
                 connector_version=result.connector_version,
             )
         )
-        _update_source_health(task.source, result)
+        _update_source_health(source, result)
 
         if not result.outcome.is_ok:
             errors.append(
                 {
-                    "source": task.source.code,
+                    "source": task.source_code,
                     "offer_type": task.offer_type.value,
                     "outcome": result.outcome.value,
                     "error_code": result.error_code,
@@ -568,17 +734,20 @@ def collect_into_snapshot(
     # неотличима от честного отсутствия предложений. На стенде так пропало
     # проживание по 395 сценариям из 465 — в логе 767 строк о пропуске, а в
     # данных ни следа.
-    for source, offer_type in selection.circuit_open:
-        until = source.circuit_open_until
+    for task in plan.skipped:
+        source = sources.get(task.source_id)
+        if source is None:  # pragma: no cover
+            continue
+        until = task.circuit_open_until
         _upsert_source_result(
             session,
             snapshot,
             source,
-            offer_type,
+            task.offer_type,
             {
-                "source_code": source.code,
-                "source_name": source.name,
-                "is_synthetic": source.is_synthetic,
+                "source_code": task.source_code,
+                "source_name": task.source_name,
+                "is_synthetic": task.is_synthetic,
                 "outcome": ConnectorOutcome.CIRCUIT_OPEN.value,
                 "latency_ms": 0,
                 "attempts": 0,
@@ -597,15 +766,16 @@ def collect_into_snapshot(
                 "connector_version": "",
                 "collected_at": snapshot.observed_at,
                 "fetched_at": fetched_at,
+                "is_partial": False,
             },
         )
-        if source.code not in source_codes:
-            source_codes.append(source.code)
-            source_ids.append(str(source.id))
+        if task.source_code not in source_codes:
+            source_codes.append(task.source_code)
+            source_ids.append(str(task.source_id))
         errors.append(
             {
-                "source": source.code,
-                "offer_type": offer_type.value,
+                "source": task.source_code,
+                "offer_type": task.offer_type.value,
                 "outcome": ConnectorOutcome.CIRCUIT_OPEN.value,
                 "error_code": "CIRCUIT_OPEN",
                 "message": "Источник не опрашивался: открыт размыкатель цепи",
@@ -624,14 +794,47 @@ def collect_into_snapshot(
 
     logger.info(
         "Сбор компонента завершен",
-        scenario=scenario.code,
+        scenario=plan.scenario_code,
         snapshot_id=str(snapshot.id),
-        offer_types=[str(item) for item in offer_types],
+        offer_types=sorted({task.offer_type.value for task in tasks}),
         offers=len(persisted_offers),
-        sources=[task.source.code for task in tasks],
+        sources=[task.source_code for task in tasks],
+        budget_exhausted=outcome.budget_exhausted,
     )
     return SnapshotBuildResult(
         snapshot=snapshot, created=False, offers=persisted_offers, errors=errors
+    )
+
+
+def collect_into_snapshot(
+    session: Session,
+    snapshot: MarketSnapshot,
+    scenario: TravelScenario,
+    *,
+    rules: ProfileRules,
+    offer_types: Sequence[OfferType],
+    settings: Settings | None = None,
+    raw_store: RawStore | None = None,
+) -> SnapshotBuildResult:
+    """Три фазы сбора в одной сессии — синхронный путь и тесты.
+
+    Плановый сбор идет иначе: там каждая фаза получает собственную сессию, и
+    сеть опрашивается вне транзакции (``tco/tasks/pipeline.py``). Здесь это
+    одна транзакция намеренно: On-demand расчет укладывается в минуту и не
+    держит базу заметное время, а разнесение фаз усложнило бы его без выгоды.
+    """
+    settings = settings or get_settings()
+    plan = plan_collection(
+        session,
+        snapshot,
+        scenario,
+        rules=rules,
+        offer_types=offer_types,
+        settings=settings,
+    )
+    outcome = execute_collection(plan, rules=rules, settings=settings)
+    return persist_collection(
+        session, plan, outcome, rules=rules, settings=settings, raw_store=raw_store
     )
 
 

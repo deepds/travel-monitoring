@@ -6,7 +6,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from celery import shared_task
+from celery import group, shared_task
 from sqlalchemy import select
 
 from tco.core.config import get_settings
@@ -207,6 +207,176 @@ def purge_result_cache() -> dict[str, int]:
     """Административный force refresh: полная очистка кэша результатов."""
     with session_scope() as session:
         return {"purged": get_result_cache().purge_all(session)}
+
+
+#: Сколько подряд циклов застоя терпеть, прежде чем перезапускать пул.
+_WATCHDOG_PATIENCE = 2
+#: Ключ, которым сторож помнит предыдущие циклы. Redis, а не память процесса:
+#: задача выполняется в пуле и может достаться другому процессу.
+_WATCHDOG_KEY = "tco:watchdog:collect_stall_cycles"
+
+
+def _watchdog_state(delta: int) -> int:
+    """Счетчик подряд идущих циклов застоя. ``delta=0`` сбрасывает."""
+    settings = get_settings()
+    if not settings.redis_url:
+        return delta
+    try:
+        import redis as redis_lib
+
+        client = redis_lib.Redis.from_url(
+            settings.redis_url, socket_timeout=2.0, socket_connect_timeout=2.0
+        )
+        try:
+            if delta <= 0:
+                client.delete(_WATCHDOG_KEY)
+                return 0
+            value = int(client.incr(_WATCHDOG_KEY))
+            # Счетчик не должен переживать сутки: застой, о котором забыли,
+            # иначе сложился бы со следующим и дал ложный перезапуск.
+            client.expire(_WATCHDOG_KEY, 6 * 3600)
+            return value
+        finally:
+            client.close()
+    except Exception as exc:  # noqa: BLE001 — сторож не должен падать сам
+        logger.warning("Состояние сторожа недоступно", error=str(exc))
+        return delta
+
+
+@shared_task(name="tco.maintenance.watch_collection_progress")
+def watch_collection_progress(stale_minutes: int = 15) -> dict[str, Any]:
+    """Сторож застрявшего сбора.
+
+    Работает в отдельном воркере обслуживания — в том самом, который не занят
+    сбором. Это и есть смысл разделения: шестого августа один воркер держал
+    очереди ``collect``, ``compute``, ``ondemand`` и ``maintenance`` разом,
+    поэтому забитый сбором пул не выполнял и детектор зависших задач. Чинить
+    было некому.
+
+    Обнаружив, что очередь сбора не разбирается, сторож просит воркеров
+    перезапустить пул: рабочие процессы поднимаются заново, задачи с
+    подтверждением после выполнения (``acks_late``) возвращаются в очередь.
+    Если это не помогло за два цикла, лечение переходит к следующей линии —
+    проверка живости объявит контейнер нездоровым, и его перезапустит
+    ``autoheal``.
+    """
+    from tco.tasks.celery_app import celery_app
+    from tco.tasks.health import check
+
+    healthy, details = check(["collect", "compute"], stale_minutes=stale_minutes)
+    if healthy:
+        _watchdog_state(0)
+        return {"stalled": False, **details}
+
+    cycles = _watchdog_state(1)
+    payload: dict[str, Any] = {"stalled": True, "cycles": cycles, **details}
+
+    if cycles <= _WATCHDOG_PATIENCE:
+        logger.warning("Сбор не движется — перезапуск пула воркеров", **payload)
+        try:
+            replies = celery_app.control.broadcast(
+                "pool_restart", arguments={"reload": False}, reply=True, timeout=10
+            )
+            payload["pool_restart_replies"] = len(replies or [])
+        except Exception as exc:  # noqa: BLE001 — брокер мог отвалиться вместе с воркером
+            logger.error("Не удалось перезапустить пул", error=str(exc), **payload)
+            payload["pool_restart_error"] = str(exc)
+    else:
+        # Перезапуск пула не помог: дальше действует проверка живости
+        # контейнера и autoheal. Сторож только фиксирует, что дошло до этого.
+        logger.error(
+            "Перезапуск пула не помог — ждем перезапуска контейнера", **payload
+        )
+    return payload
+
+
+@shared_task(name="tco.monitoring.backfill_missing_observations", bind=True)
+def backfill_missing_observations(
+    self,  # noqa: ANN001
+    lookback_days: int = 0,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Досбор дыр: повторяет сценарии, оставшиеся сегодня без наблюдения.
+
+    Штатный шаг суточного цикла, а не аварийная мера. Часть сценариев
+    неизбежно выпадает: источник ответил таймаутом, размыкатель цепи был
+    разомкнут, воркер перезапустился на середине. К моменту досбора размыкатель
+    остывает (900 секунд по умолчанию), и повтор обычно проходит.
+
+    Дырой считается сценарий сетки без успешного снимка за сегодня. Снимок с
+    предложениями, но неудачным расчетом, дырой не считается: пересчитать его
+    можно и без обращения к источникам.
+    """
+    from tco.core.enums import ScenarioType, SnapshotStatus
+    from tco.db.models.scenario import TravelScenario
+    from tco.db.models.snapshot import MarketSnapshot
+    from tco.tasks.pipeline import refresh_monitoring_scenario
+
+    today = utcnow().date() - timedelta(days=max(0, lookback_days))
+
+    with session_scope() as session:
+        collected = select(MarketSnapshot.scenario_id).where(
+            MarketSnapshot.observation_date >= today,
+            MarketSnapshot.status.in_(
+                [SnapshotStatus.COMPLETE.value, SnapshotStatus.PARTIAL.value]
+            ),
+        )
+        missing = session.scalars(
+            select(TravelScenario)
+            .where(TravelScenario.scenario_type == ScenarioType.MONITORING.value)
+            .where(TravelScenario.is_active.is_(True))
+            .where(TravelScenario.deleted_at.is_(None))
+            .where(TravelScenario.is_showcase_grid.is_(True))
+            .where(TravelScenario.id.not_in(collected))
+            .order_by(TravelScenario.departure_date, TravelScenario.code)
+        ).all()
+        scenario_ids = [str(item.id) for item in missing]
+
+    if limit:
+        scenario_ids = scenario_ids[:limit]
+    if not scenario_ids:
+        logger.info("Досбор не потребовался: дыр нет", date=today.isoformat())
+        return {"missing": 0, "dispatched": 0, "date": today.isoformat()}
+
+    # Принудительный сбор: снимок за это окно уже мог быть заведен неудачной
+    # попыткой, и без ``force_refresh`` повтор вернул бы SKIPPED_IDEMPOTENT.
+    dispatched = group(
+        refresh_monitoring_scenario.s(scenario_id, None, True, None)
+        for scenario_id in scenario_ids
+    ).apply_async()
+
+    logger.info(
+        "Досбор дыр запущен",
+        date=today.isoformat(),
+        scenarios=len(scenario_ids),
+        group_id=str(dispatched.id),
+    )
+    return {
+        "missing": len(scenario_ids),
+        "dispatched": len(scenario_ids),
+        "date": today.isoformat(),
+        "group_id": str(dispatched.id),
+    }
+
+
+@shared_task(name="tco.metrics.daily_collection_report")
+def daily_collection_report(day_offset: int = 0) -> dict[str, Any]:
+    """Сводка качества суточного прогона.
+
+    Прогон, потерявший больше пяти процентов сценариев, должен быть виден без
+    чтения логов — иначе о потере узнают по дырам на витрине через сутки.
+    """
+    from tco.services.coverage import daily_run_summary
+
+    day = utcnow().date() - timedelta(days=max(0, day_offset))
+    with session_scope() as session:
+        report = daily_run_summary(session, day=day)
+
+    if report["missing_ratio"] > 0.05:
+        logger.error("Суточный прогон потерял больше 5 % сценариев", **report)
+    else:
+        logger.info("Суточный прогон завершен", **report)
+    return report
 
 
 # --------------------------------------------------------------------------- #

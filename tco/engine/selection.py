@@ -140,6 +140,19 @@ def component_of(offer: Offer) -> ComponentType:
 # --------------------------------------------------------------------------- #
 
 
+def _room_is_excluded(room_name: str | None, keywords: Sequence[str]) -> bool:
+    """Относится ли категория номера к исключенным из массового сегмента.
+
+    Без названия категории решения не принимается: отбраковывать предложение
+    за то, что источник не заполнил поле, значило бы терять обычные отели там,
+    где выдача беднее.
+    """
+    if not room_name:
+        return False
+    lowered = room_name.casefold()
+    return any(keyword.casefold() in lowered for keyword in keywords if keyword)
+
+
 def profile_filter_reason(
     offer: Offer, spec: ScenarioFilterSpec, rules: ProfileRules
 ) -> str | None:
@@ -211,6 +224,14 @@ def profile_filter_reason(
         return "MISSING_ACCOMMODATION_DETAIL"
     if accommodation.accommodation_type != spec.accommodation_type.value:
         return "ACCOMMODATION_TYPE_MISMATCH"
+    # Апартаменты и хостелы не относятся к массовому гостиничному сегменту.
+    # Источник умеет отсекать их сам, но тип объекта в ответе не возвращает,
+    # поэтому здесь идет проверка по названию категории номера — единственному
+    # признаку, который до нас доходит.
+    if filters.accommodation_excluded_room_keywords and _room_is_excluded(
+        accommodation.room_name, filters.accommodation_excluded_room_keywords
+    ):
+        return "ROOM_CATEGORY_EXCLUDED"
     if not stars_satisfies(
         accommodation.stars,
         accommodation.stars_status == "UNRATED",

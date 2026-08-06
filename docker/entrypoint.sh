@@ -43,13 +43,29 @@ case "$role" in
             --proxy-headers --forwarded-allow-ips='*' \
             --no-access-log
         ;;
+    # Воркеров два, и это не про производительность, а про то, чтобы было кому
+    # чинить. Пока один процесс держал collect, compute, ondemand и maintenance
+    # разом, забитый сбором пул не выполнял ни детектор зависших задач, ни
+    # пользовательский расчет: 6 августа воркер трижды за сутки вставал
+    # намертво и поднимался только руками.
+    #
+    # `worker` — сбор и расчет, все длинное и сетевое.
+    # `worker-service` — обслуживание и запросы пользователя, всегда свободен.
     worker)
         wait_for_db
         exec celery -A tco.tasks.celery_app:celery_app worker \
             --loglevel="${CELERY_LOG_LEVEL:-info}" \
             --concurrency="${CELERY_CONCURRENCY:-4}" \
-            --queues="${CELERY_QUEUES:-collect,compute,ondemand,maintenance}" \
-            --hostname="worker@%h"
+            --queues="${CELERY_QUEUES:-collect,compute}" \
+            --hostname="collect@%h"
+        ;;
+    worker-service)
+        wait_for_db
+        exec celery -A tco.tasks.celery_app:celery_app worker \
+            --loglevel="${CELERY_LOG_LEVEL:-info}" \
+            --concurrency="${CELERY_CONCURRENCY:-2}" \
+            --queues="${CELERY_QUEUES:-maintenance,ondemand}" \
+            --hostname="service@%h"
         ;;
     beat)
         wait_for_db
