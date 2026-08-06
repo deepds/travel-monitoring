@@ -33,6 +33,7 @@ from tco.core.enums import (
     CancellationFilter,
     FlightFareType,
     MealType,
+    ProfileStatus,
     RailClass,
     ScenarioType,
     StarsFilter,
@@ -185,8 +186,14 @@ def maintain_grid(
     today = today or utcnow().date()
     report = GridReport(horizon_until=today + timedelta(days=horizon_days))
 
+    # Именно действующая версия и именно последняя: у кода бывает несколько
+    # версий, и без отбора выбиралась бы произвольная — то есть методика витрины
+    # менялась бы молча от порядка строк в таблице.
     profile = session.scalars(
-        select(CalculationProfile).where(CalculationProfile.code == GRID_PROFILE_CODE)
+        select(CalculationProfile)
+        .where(CalculationProfile.code == GRID_PROFILE_CODE)
+        .where(CalculationProfile.status == ProfileStatus.ACTIVE.value)
+        .order_by(CalculationProfile.version_seq.desc())
     ).first()
     # Без своего профиля сетка считалась бы по базовой методике — с другими
     # правилами по классу вагона и возвратности, то есть показывала бы не то,
@@ -201,6 +208,10 @@ def maintain_grid(
         # сценарий, заведенный до появления поля, иначе остался бы неотмеченным
         # и продолжил бы попадать в агрегаты рынка.
         scenario.is_showcase_grid = True
+        # Закрепление за методикой обновляется и у существующих: новая версия
+        # профиля иначе не дошла бы до уже заведенной сетки, и витрина осталась
+        # бы считаться по архивной методике до полной пересборки сетки.
+        scenario.calculation_profile_id = profile.id
         if created:
             report.created += 1
         else:

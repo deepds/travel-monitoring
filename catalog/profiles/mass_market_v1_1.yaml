@@ -1,0 +1,145 @@
+# Методика витрины вариантов отдыха, версия 1.1.0.
+#
+# Отличается от `baseline` не качеством данных, а тем, ЧТО считается рынком для
+# массового туриста. Постановка пришла от заказчика и звучит так: авиа — все
+# компании включая Аэрофлот, но невозвратные и прямые, всплески не учитываем.
+#
+# Заведено отдельным профилем, а не правкой baseline, сознательно: активная
+# версия методики неизменяема, исторические расчеты остаются привязанными к
+# своей версии, а два профиля позволяют держать обе картины одновременно —
+# аналитическую на старом дашборде и витринную на новой странице.
+#
+# ЧТО ИЗМЕНИЛОСЬ ПРОТИВ 1.0.0
+#
+# Снят отбор по классу обслуживания купе (`rail_service_classes: [2К, 2Д]`).
+# Правило заводилось на доводе «внутри купе цены различаются кратно:
+# двухместное купе стоит вдвое против четырехместного». На данных это не
+# подтвердилось: сравнение внутри одного наблюдения — тот же маршрут, та же
+# дата, тот же момент — дает отношение 1.00 к 2К у всех девяти остальных
+# купейных классов, p10/p90 в пределах ±10 %. Трехкратный разброс в общих
+# медианах создается тем, какие классы на каких маршрутах ходят, а не самим
+# классом. Двухместное размещение, ради которого правило писалось, — это СВ,
+# первый класс, и его отсекает тип вагона, а не буква.
+#
+# Цена правила была высокой. Класса `2Д` не существует ни на одном из 22
+# направлений сетки. Отбор снимал 24 315 предложений РЖД за 36 часов при
+# 21 105 прошедших и весь Туту целиком — он класс обслуживания не сообщает ни
+# в поиске, ни в карте мест, — так что железная дорога витрины держалась на
+# одном источнике из двух. Где после отбора не оставалось ничего, расчет
+# выходил NO_DATA и линия на графике рвалась: 172 разрыва из 600 точек.
+#
+# Разделение, ради которого правило вводилось, уже делает `rail_class`: купе и
+# плацкарт агрегируются раздельно, СВ в выборку не попадает.
+#
+# Остальные два отличия от baseline 2.0.0 сохранены:
+#
+#   1. `filters.flights_non_refundable_only: true`
+#      Возвратный тариф продается с надбавкой и завышает медиану: на живых
+#      данных возвратных примерно половина выдачи.
+#
+#   2. `filters.flights_direct_only: true`
+#      Витрина показывает поездку, а не логистическую возможность. Стыковка
+#      через третий город дает формально верную, но бессмысленную цену — на
+#      Краснодаре и Сочи это давало 108 тысяч рублей за 10 часов в пути.
+#
+# «Не считаем всплески» отдельного правила не требует: отсечка выбросов по IQR
+# работает в базовой методике и наследуется здесь без изменений.
+
+code: mass-market
+name: Витрина вариантов отдыха
+version: "1.1.0"
+# Действует сразу: профиль закрепляется за сценариями сетки, а закрепление
+# работает только на активную методику. Профилем по умолчанию он при этом не
+# становится — им остается baseline, см. DEFAULT_PROFILE_CODE.
+status: ACTIVE
+description: >
+  Методика массового сегмента для витрины по пяти ключевым городам:
+  невозвратные прямые авиарейсы, отсечка ценовых всплесков. Купе и плацкарт
+  агрегируются раздельно типом вагона; отбор по классу обслуживания снят в
+  1.1.0 как не разделяющий цену. Пороги качества, агрегация и допуск
+  источников совпадают с базовой методикой.
+
+rules:
+  filters:
+    require_base_currency: true
+    min_price: 1.0
+    max_price: null
+    require_capacity_confirmation: true
+    strict_baggage_classification: true
+    stars_exact_match: true
+    meal_at_least_requested: true
+    max_stops: null
+    enforce_cancellation_filter: true
+    allow_synthetic_sources: false
+    rail_service_classes: []
+    flights_non_refundable_only: true
+    flights_direct_only: true
+
+  eligibility:
+    min_valid_offers: 5
+    max_data_age_minutes: 120
+    max_invalid_offer_ratio: 0.30
+    max_unclassified_fare_ratio: 0.40
+    count_unreported_as_unclassified: false
+    min_offers_after_dedup: 3
+    min_offers_after_dedup_rail: 2
+    require_successful_call: true
+    min_source_confidence: null
+
+  outliers:
+    method: IQR
+    iqr_multiplier: 1.5
+    min_sample_size: 4
+    scope: PER_SOURCE
+    max_outlier_ratio: 0.4
+
+  aggregation:
+    per_source_statistic: MEDIAN
+    trim_ratio: 0.1
+    cross_source_method: MEDIAN_OF_MEDIANS
+    two_source_method: MEAN
+    percentile_method: LINEAR
+    high_disagreement_threshold: 0.30
+    allow_single_source: true
+
+  quality:
+    weights:
+      component_completeness: 0.30
+      source_count: 0.20
+      offer_count: 0.15
+      source_agreement: 0.15
+      freshness: 0.10
+      connector_stability: 0.10
+    partial_success_threshold: 60.0
+    target_source_count: 2
+    target_offer_count: 20
+    single_source_agreement_score: 0.5
+    default_connector_stability: 0.8
+    stability_window_days: 30
+
+  confidence:
+    high_min_quality: 80.0
+    medium_min_quality: 60.0
+    low_min_quality: 40.0
+    high_min_sources_per_component: 2
+    high_max_disagreement: 0.15
+    high_min_source_confidence: 60.0
+    max_unclassified_ratio: 0.40
+
+  limits:
+    source_soft_timeout_seconds: 20.0
+    source_hard_timeout_seconds: 30.0
+    on_demand_total_timeout_seconds: 60.0
+    max_retries: 2
+    max_offers_per_source: 300
+    result_cache_ttl_minutes: 45
+
+  transport_pricing:
+    rail_child_fare_ratio: 1.0
+    rail_child_max_age: 9
+    max_roundtrip_combinations: 64
+    roundtrip_legs_per_direction: 8
+
+  allowed_source_codes: []
+  excluded_source_codes: []
+  rounding_digits: 0

@@ -121,6 +121,20 @@ def seed_profiles(session: Session, directory: Path | None = None) -> int:
             if declared == ProfileStatus.ACTIVE.value
             else ProfileStatus.DRAFT.value
         )
+        # Активной может быть только одна версия кода — то же правило, что у
+        # ручной активации. Без этого новая версия из каталога встала бы рядом
+        # с прежней, и выбор методики стал бы неопределенным: обе подходят.
+        if status == ProfileStatus.ACTIVE.value:
+            now = utcnow()
+            for previous in session.scalars(
+                select(CalculationProfile)
+                .where(CalculationProfile.code == code)
+                .where(CalculationProfile.status == ProfileStatus.ACTIVE.value)
+            ).all():
+                previous.status = ProfileStatus.ARCHIVED.value
+                previous.archived_at = now
+                previous.updated_at = now
+
         profile = CalculationProfile(
             code=code,
             name=payload["name"],
