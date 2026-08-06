@@ -426,6 +426,12 @@ def collect_into_snapshot(
         observation_seed=snapshot.observed_at.isoformat(),
         max_workers=settings.monitoring_batch_concurrency,
     )
+    # Фактический момент обращения к источникам — один на весь снимок: сбор
+    # идет параллельно и занимает секунды, а дальше следует запись, разнесенная
+    # по времени сохранением raw. Отметка нужна расчету, чтобы считать свежесть
+    # от сбора, а не от метки часового окна: та округлена вниз, и снимок,
+    # закрытый через два часа после начала окна, объявлял себя устаревшим.
+    fetched_at = utcnow()
 
     persisted_offers: list[Offer] = []
     errors: list[dict[str, Any]] = []
@@ -518,6 +524,7 @@ def collect_into_snapshot(
             "error_message": result.error_message,
             "connector_version": result.connector_version,
             "collected_at": snapshot.observed_at,
+            "fetched_at": fetched_at,
         }
         _upsert_source_result(session, snapshot, task.source, task.offer_type, fields)
         session.add(
@@ -589,6 +596,7 @@ def collect_into_snapshot(
                 ),
                 "connector_version": "",
                 "collected_at": snapshot.observed_at,
+                "fetched_at": fetched_at,
             },
         )
         if source.code not in source_codes:

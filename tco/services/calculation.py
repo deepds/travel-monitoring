@@ -327,7 +327,15 @@ def build_source_infos(
             source_code=row.source_code,
             source_name=row.source_name,
             outcome=ConnectorOutcome(row.outcome),
-            collected_at=row.collected_at,
+            # Свежесть считается от фактического обращения к источнику, а не от
+            # метки окна наблюдения: она округлена вниз до часа, и снимок,
+            # собранный к 11:05 под меткой 09:00, выходил устаревшим на 125
+            # минут при пороге 120. Источник в таком снимке не допускался, и
+            # расчет выходил NO_DATA при полных данных.
+            #
+            # ``collected_at`` остается запасным вариантом: у записей, сделанных
+            # до появления ``fetched_at``, другого времени нет.
+            collected_at=row.fetched_at or row.collected_at,
             is_synthetic=row.is_synthetic,
             latency_ms=row.latency_ms,
             raw_offer_count=row.raw_offer_count,

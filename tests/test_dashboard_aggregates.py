@@ -238,3 +238,125 @@ class TestFreshnessIsMeasuredFromTheSnapshot:
         _, age = self.build(observed, observed + timedelta(minutes=3))
 
         assert age is not None and age < 120
+
+
+class TestFreshnessOfALongCollectionRun:
+    """Долгий прогон не должен объявлять свои же данные устаревшими.
+
+    ``observed_at`` — метка окна наблюдения, округленная вниз до часа. Пока
+    возраст считался от нее, снимок под меткой 09:00, закрытый в 11:05,
+    выходил устаревшим на 125 минут при пороге 120 — хотя предложения в нем
+    собраны минуту назад. Суточный прогон сетки идет по лимиту темпа
+    источников дольше двух часов всегда, поэтому выпадало не случайное
+    наблюдение, а вся вторая половина прогона: 799 расчетов из 1240 на стенде.
+    """
+
+    @staticmethod
+    def _snapshot(session, *, observed_at, completed_at, fetched_at):
+        from tco.db.models.snapshot import MarketSnapshot, SnapshotSourceResult
+        from tco.db.models.source import Source
+
+        cities = session.scalars(select(City).limit(2)).all()
+        source = session.scalars(select(Source).limit(1)).first()
+        assert len(cities) == 2 and source is not None, "нужны справочники из bootstrap"
+
+        suffix = uuid.uuid4().hex[:8]
+        departure = date.today() + timedelta(days=20)
+        scenario = TravelScenario(
+            code=f"TEST-FETCHED-{suffix}",
+            name="Проверка свежести долгого прогона",
+            origin_city_id=cities[0].id,
+            destination_city_id=cities[1].id,
+            departure_date=departure,
+            return_date=departure + timedelta(days=5),
+            nights=5,
+            adults=1,
+            transport_type="RAIL",
+            fingerprint=f"test-fetched-{suffix}",
+        )
+        session.add(scenario)
+        session.flush()
+
+        snapshot = MarketSnapshot(
+            scenario_id=scenario.id,
+            scenario_fingerprint=scenario.fingerprint,
+            snapshot_type="SCHEDULED",
+            requested_at=observed_at,
+            completed_at=completed_at,
+            observed_at=observed_at,
+            observation_date=observed_at.date(),
+            status="COMPLETE",
+            normalization_version="1.0.0",
+            idempotency_key=f"test-fetched-{suffix}",
+            created_at=observed_at,
+        )
+        session.add(snapshot)
+        session.flush()
+
+        session.add(
+            SnapshotSourceResult(
+                market_snapshot_id=snapshot.id,
+                source_id=source.id,
+                source_code=source.code,
+                source_name=source.name,
+                offer_type="RAIL",
+                outcome="SUCCESS",
+                collected_at=observed_at,
+                fetched_at=fetched_at,
+            )
+        )
+        session.flush()
+        return snapshot, source.code
+
+    def test_source_context_takes_the_moment_of_the_call(self, session):
+        """Контекст источника берет фактическое обращение, а не метку окна."""
+        from tco.services.calculation import build_source_infos
+
+        observed = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=3)
+        fetched = observed + timedelta(minutes=125)
+        snapshot, code = self._snapshot(
+            session,
+            observed_at=observed,
+            completed_at=fetched + timedelta(minutes=1),
+            fetched_at=fetched,
+        )
+
+        infos = build_source_infos(session, snapshot)
+
+        assert infos[code].collected_at == fetched
+
+    def test_data_collected_late_in_the_run_is_still_eligible(self, session):
+        """Собранное к концу двухчасового прогона проходит допуск по свежести."""
+        from tco.engine.aggregation import check_eligibility
+        from tco.schemas.profile import ProfileRules
+        from tco.services.calculation import build_source_infos
+
+        observed = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=3)
+        fetched = observed + timedelta(minutes=125)
+        completed = fetched + timedelta(minutes=1)
+        snapshot, code = self._snapshot(
+            session, observed_at=observed, completed_at=completed, fetched_at=fetched
+        )
+
+        rules = ProfileRules.parse({"eligibility": {"max_data_age_minutes": 120}})
+        info = build_source_infos(session, snapshot)[code]
+        _, reasons, age = check_eligibility(info, [], [], rules, now=completed)
+
+        assert age is not None and age < 120, f"возраст {age} мин — снова считается от метки окна"
+        assert not any("устарели" in reason for reason in reasons)
+
+    def test_old_rows_without_the_field_fall_back_to_the_window_label(self, session):
+        """У записей до появления поля свежесть считается по-старому.
+
+        Иначе миграция потребовала бы выдумать время обращения задним числом.
+        """
+        from tco.services.calculation import build_source_infos
+
+        observed = utcnow() - timedelta(hours=2)
+        snapshot, code = self._snapshot(
+            session, observed_at=observed, completed_at=observed, fetched_at=None
+        )
+
+        infos = build_source_infos(session, snapshot)
+
+        assert infos[code].collected_at == observed
