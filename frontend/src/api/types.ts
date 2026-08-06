@@ -705,6 +705,8 @@ export interface ShowcaseOption {
   total: number | null;
   /** Каких компонент не хватило: пустая строка иначе читается как бесплатная поездка. */
   missing: string[];
+  /** Число получено разовым расчетом на дату вне сетки, а не наблюдением. */
+  on_demand: boolean;
 }
 
 export interface ShowcaseOptions {

@@ -9,7 +9,8 @@
  */
 
 import {
-  Alert, App, Button, Card, Col, DatePicker, Empty, Row, Segmented, Select, Space, Table, Typography,
+  Alert, App, Button, Card, Col, DatePicker, Empty, Row, Segmented, Select, Space, Table, Tag,
+  Typography,
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -327,7 +328,19 @@ export default function ShowcasePage() {
               {
                 title: 'Куда',
                 dataIndex: 'destination_name',
-                render: (value: string) => <b>{value}</b>,
+                // Разовый расчет помечается: это один снимок по запросу, а не
+                // наблюдение сетки, и рядом с наблюдавшимися числами он должен
+                // быть отличим.
+                render: (value: string, row) => (
+                  <Space size={6}>
+                    <b>{value}</b>
+                    {row.on_demand ? (
+                      <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                        разовый расчёт
+                      </Tag>
+                    ) : null}
+                  </Space>
+                ),
               },
               {
                 title: 'Транспорт',

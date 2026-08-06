@@ -23,7 +23,13 @@ from typing import Any, Iterable, Sequence
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from tco.core.enums import OfferType, StarsFilter, TransportType
+from tco.core.enums import (
+    AccommodationType,
+    OfferType,
+    ScenarioType,
+    StarsFilter,
+    TransportType,
+)
 from tco.core.utils import to_decimal, utcnow
 from tco.db.models.offer import Offer, RailOffer
 from tco.db.models.reference import City
@@ -97,6 +103,54 @@ def _grid_scenarios(
     return [item for item in rows if GRID_TAG in (item.tags or [])]
 
 
+def _on_demand_observations(
+    session: Session,
+    *,
+    origin: str,
+    departure_date: date,
+    return_date: date,
+    transport_type: TransportType,
+    stars: StarsFilter,
+) -> dict[str, _Observation]:
+    """Разовые расчеты витрины на даты вне сетки.
+
+    Кнопка «Рассчитать эти даты» заводит обычный сценарий типа ``ON_DEMAND``.
+    Тега сетки у него нет и быть не должно: сетку достраивает и снимает с
+    наблюдения обслуживающая задача, и чужая запись в скользящем окне сломала
+    бы его. Поэтому такие расчеты читаются отдельным отбором.
+
+    В отличие от сетки, где проезд и проживание наблюдаются разными
+    сценариями, разовый расчет совмещает их в одном: он делается на конкретную
+    поездку, а не на переиспользуемое наблюдение. Обе компоненты поэтому
+    берутся из одного расчета — и это даже точнее, потому что они из одного
+    снимка.
+
+    Отбор строгий, вплоть до числа путешественников и звездности: витрина
+    ставит числа в один ряд, и расчет с другими параметрами дал бы
+    несопоставимую цифру, ничем не отличимую на вид.
+    """
+    origin_id = select(City.id).where(City.code == origin).scalar_subquery()
+    scenarios = session.scalars(
+        select(TravelScenario)
+        .where(TravelScenario.deleted_at.is_(None))
+        .where(TravelScenario.scenario_type == ScenarioType.ON_DEMAND.value)
+        .where(TravelScenario.origin_city_id == origin_id)
+        .where(TravelScenario.departure_date == departure_date)
+        .where(TravelScenario.return_date == return_date)
+        .where(TravelScenario.transport_type == transport_type.value)
+        .where(TravelScenario.accommodation_type == AccommodationType.HOTEL.value)
+        .where(TravelScenario.stars == stars.value)
+        .where(TravelScenario.adults == SHOWCASE_ADULTS)
+    ).all()
+
+    runs = _latest_runs(session, scenarios)
+    return {
+        item.destination_city.code: _Observation(scenario=item, run=runs[item.id])
+        for item in scenarios
+        if item.id in runs
+    }
+
+
 def _observations(
     session: Session,
     scenarios: Iterable[TravelScenario],
@@ -160,6 +214,18 @@ def options(
         elif scenario.transport_type is None and scenario.stars == stars.value:
             accommodation[scenario.destination_city.code] = item
 
+    # Даты вне сетки покрываются разовым расчетом — иначе кнопка «Рассчитать
+    # эти даты» отрабатывала бы вхолостую: расчет проходил, а витрина его не
+    # видела и показывала ту же пустую таблицу.
+    on_demand = _on_demand_observations(
+        session,
+        origin=origin,
+        departure_date=departure_date,
+        return_date=return_date,
+        transport_type=transport_type,
+        stars=stars,
+    )
+
     items: list[dict[str, Any]] = []
     for code in SHOWCASE_CITIES:
         if code == origin:
@@ -168,6 +234,19 @@ def options(
         stay_run = accommodation.get(code)
         transport_cost = _money(transport_run.run.transport_median) if transport_run else None
         stay_cost = _money(stay_run.run.hotel_median) if stay_run else None
+
+        # Наблюдение сетки в приоритете: разовый расчет дополняет его, а не
+        # подменяет. Иначе один пересчет менял бы цифру уже показанного ряда.
+        once = on_demand.get(code)
+        from_on_demand = False
+        if once is not None:
+            if transport_cost is None:
+                transport_cost = _money(once.run.transport_median)
+                from_on_demand = transport_cost is not None
+            if stay_cost is None:
+                stay_cost = _money(once.run.hotel_median)
+                from_on_demand = from_on_demand or stay_cost is not None
+
         total = (
             transport_cost + stay_cost
             if transport_cost is not None and stay_cost is not None
@@ -180,6 +259,9 @@ def options(
                 "transport": transport_cost,
                 "accommodation": stay_cost,
                 "total": total,
+                # Разовый расчет — это один снимок по запросу, а не наблюдение
+                # сетки. Интерфейс должен иметь возможность это показать.
+                "on_demand": from_on_demand,
                 # Показываем то, чего не хватило: пустая строка без объяснения
                 # читается как «поездка бесплатна».
                 "missing": [
