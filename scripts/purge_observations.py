@@ -78,23 +78,37 @@ def main() -> int:
     args = parser.parse_args()
 
     with session_scope() as session:
-        snapshot_ids = list(
-            session.scalars(
-                select(MarketSnapshot.id).where(MarketSnapshot.observation_date < args.before)
-            ).all()
+        # Отбор задается подзапросом, а не списком идентификаторов.
+        #
+        # Список из тысяч значений в ``IN`` не работает: проверено дважды, и оба
+        # раза удаление шло больше часа, не продвинувшись. Планировщик получает
+        # тысячи констант вместо отношения и не может ни построить соединение,
+        # ни воспользоваться индексом. Подзапрос он соединяет с таблицей как
+        # обычно — та же операция занимает секунды.
+        snapshot_filter = (
+            select(MarketSnapshot.id)
+            .where(MarketSnapshot.observation_date < args.before)
+            .scalar_subquery()
+        )
+        snapshot_count = (
+            session.scalar(
+                select(func.count(MarketSnapshot.id)).where(
+                    MarketSnapshot.observation_date < args.before
+                )
+            )
+            or 0
         )
         runs = session.scalar(
             select(func.count(ScenarioRun.id)).where(ScenarioRun.observation_date < args.before)
         )
         offers = (
             session.scalar(
-                select(func.count(Offer.id)).where(Offer.market_snapshot_id.in_(snapshot_ids))
+                select(func.count(Offer.id)).where(Offer.market_snapshot_id.in_(snapshot_filter))
             )
-            if snapshot_ids
-            else 0
+            or 0
         )
 
-        print(f"Снимков: {len(snapshot_ids)}")
+        print(f"Снимков: {snapshot_count}")
         print(f"Расчетов: {runs}")
         print(f"Предложений: {offers}")
 
@@ -104,7 +118,7 @@ def main() -> int:
         if not args.yes:
             print("Не указан --yes: ничего не удалено", file=sys.stderr)
             return 2
-        if not snapshot_ids:
+        if not snapshot_count:
             print("Нечего удалять")
             return 0
 
@@ -115,17 +129,17 @@ def main() -> int:
         storage_errors = 0
         refs = session.scalars(
             select(RawResponse.storage_ref).where(
-                RawResponse.market_snapshot_id.in_(snapshot_ids)
+                RawResponse.market_snapshot_id.in_(snapshot_filter)
             )
         ).all()
         html_refs = session.scalars(
             select(HtmlSnapshot.storage_ref).where(
-                HtmlSnapshot.market_snapshot_id.in_(snapshot_ids)
+                HtmlSnapshot.market_snapshot_id.in_(snapshot_filter)
             )
         ).all()
         screenshot_refs = session.scalars(
             select(HtmlSnapshot.screenshot_ref)
-            .where(HtmlSnapshot.market_snapshot_id.in_(snapshot_ids))
+            .where(HtmlSnapshot.market_snapshot_id.in_(snapshot_filter))
             .where(HtmlSnapshot.screenshot_ref.is_not(None))
         ).all()
         for ref in (*refs, *html_refs, *screenshot_refs):
@@ -136,22 +150,24 @@ def main() -> int:
         #    ушли бы и каскадом снимка, но удаляются явно — чтобы объем операции
         #    был виден в отчете, а не только в размере базы.
         session.execute(
-            delete(HtmlSnapshot).where(HtmlSnapshot.market_snapshot_id.in_(snapshot_ids))
+            delete(HtmlSnapshot).where(HtmlSnapshot.market_snapshot_id.in_(snapshot_filter))
         )
         session.execute(
-            delete(RawResponse).where(RawResponse.market_snapshot_id.in_(snapshot_ids))
+            delete(RawResponse).where(RawResponse.market_snapshot_id.in_(snapshot_filter))
         )
-        session.execute(delete(Offer).where(Offer.market_snapshot_id.in_(snapshot_ids)))
+        session.execute(delete(Offer).where(Offer.market_snapshot_id.in_(snapshot_filter)))
 
         # 3. Журнал задач переживает удаление — обнуляется только ссылка.
         session.execute(
             update(Job)
-            .where(Job.market_snapshot_id.in_(snapshot_ids))
+            .where(Job.market_snapshot_id.in_(snapshot_filter))
             .values(market_snapshot_id=None, scenario_run_id=None)
         )
 
         session.execute(delete(ScenarioRun).where(ScenarioRun.observation_date < args.before))
-        session.execute(delete(MarketSnapshot).where(MarketSnapshot.id.in_(snapshot_ids)))
+        session.execute(
+            delete(MarketSnapshot).where(MarketSnapshot.observation_date < args.before)
+        )
 
         # 4. Кэш результатов ссылается на расчеты по идентификатору. Оставить его
         #    нельзя: API отдал бы из кэша ссылку на удаленный расчет.
@@ -167,7 +183,7 @@ def main() -> int:
             metric_rows = session.scalar(select(func.count(SourceMetric.id))) or 0
             session.execute(delete(SourceMetric))
 
-        print(f"Удалено снимков: {len(snapshot_ids)}, расчетов: {runs}, предложений: {offers}")
+        print(f"Удалено снимков: {snapshot_count}, расчетов: {runs}, предложений: {offers}")
         print(f"Очищено записей кэша результатов: {cache_rows}")
         if args.with_source_metrics:
             print(f"Удалено метрик источников: {metric_rows}")
