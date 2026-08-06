@@ -86,16 +86,21 @@ curl -fsS http://localhost:8000/api/v1/version
 | Время | Задача | Что собирает | Окно |
 |---|---|---|---|
 | 00:30 | `maintain_observation_grid` | достройка сетки на новый день горизонта | 10 мин |
-| 01:00 | `refresh_all_monitoring_scenarios` | ЖД, 600 сценариев | 2 ч |
-| 03:30 | `refresh_all_monitoring_scenarios` | авиа, 600 сценариев | 2 ч |
-| 06:00 | `refresh_all_monitoring_scenarios` | проживание на ночь, 450 | 1,5 ч |
+| 01:00 | `refresh_all_monitoring_scenarios` | ЖД плечом, 600 сценариев | 1,5 ч |
+| 02:30 | `refresh_all_monitoring_scenarios` | авиа круговым тарифом, 600 | 2 ч |
+| 04:30 | `refresh_all_monitoring_scenarios` | авиа плечом, 600 | 2 ч |
+| 06:30 | `refresh_all_monitoring_scenarios` | проживание на ночь, 450 | 1,5 ч |
 | 08:00 | `refresh_all_monitoring_scenarios` | контрольные пятидневные, 45 | 15 мин |
 | 09:00 | `backfill_missing_observations` | досбор дыр | 1 ч |
 | 10:00 | `daily_collection_report` | сводка качества за сутки | — |
 
 Окна отбираются тегами сетки (`showcase-rail`, `showcase-avia`,
-`showcase-stay-1n`, `showcase-stay-5n`): сценарий попадает ровно в одно, иначе
-он либо соберется дважды, либо не соберется вовсе.
+`showcase-avia-1w`, `showcase-stay-1n`, `showcase-stay-5n`): сценарий попадает
+ровно в одно, иначе он либо соберется дважды, либо не соберется вовсе.
+
+Авиа наблюдается двумя рядами — круговым тарифом и плечом в одну сторону, — и
+ряды идут разными окнами: вместе это 1200 сценариев подряд, а именно залп
+такого размера открыл размыкатель цепи 6 августа.
 
 Остальное обслуживание:
 
