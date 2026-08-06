@@ -422,11 +422,21 @@ def transport_curve(
 def accommodation_curve(
     session: Session,
     *,
+    origin: str | None = None,
     stars: StarsFilter = CURVE_STARS,
     days: int = HORIZON_DAYS,
     today: date | None = None,
 ) -> dict[str, Any]:
-    """Медиана проживания по датам заезда для каждого из пяти городов."""
+    """Медиана проживания по датам заезда по городам, куда можно поехать.
+
+    Город отправления исключается: витрина отвечает на вопрос «куда поехать из
+    своего города», и отель в нем вариантом поездки не является. Без этого
+    график проживания показывал пять городов там, где график проезда показывает
+    четыре, и лишняя кривая читалась как еще одно направление.
+
+    ``origin`` необязателен: без него отдаются все пять городов — это нужно
+    экранам, которые смотрят на рынок целиком, а не из чьей-то точки.
+    """
     today = today or utcnow().date()
     horizon = today + timedelta(days=days)
     names = _city_names(session)
@@ -438,7 +448,9 @@ def accommodation_curve(
     ]
     observed = _observations(session, scenarios)
 
-    series: dict[str, list[dict[str, Any]]] = {code: [] for code in SHOWCASE_CITIES}
+    series: dict[str, list[dict[str, Any]]] = {
+        code: [] for code in SHOWCASE_CITIES if code != origin
+    }
     for item in observed:
         code = item.scenario.destination_city.code
         price = _money(item.run.hotel_median)
@@ -449,6 +461,7 @@ def accommodation_curve(
         )
 
     return {
+        "origin_code": origin,
         "stars": stars.value,
         "nights": CANONICAL_NIGHTS,
         "travelers": SHOWCASE_ADULTS,

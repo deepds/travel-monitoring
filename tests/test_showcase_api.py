@@ -174,3 +174,44 @@ class TestTransportCurveFollowsTheSelectedMode:
         )
 
         assert response.json()["transport_type"] == "RAIL"
+
+
+class TestAccommodationCurveExcludesTheOrigin:
+    """Отель в городе отправления не является вариантом поездки.
+
+    График проезда исключал город отправления, а график проживания показывал
+    все пять — лишняя кривая читалась как еще одно направление.
+    """
+
+    def test_origin_city_is_absent(self, client, viewer_headers):
+        response = client.get(
+            "/api/v1/showcase/accommodation-curve",
+            params={"origin": "LED", "stars": "3"},
+            headers=viewer_headers,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        codes = {item["city_code"] for item in payload["series"]}
+        assert "LED" not in codes
+        assert len(codes) == 4
+
+    def test_without_origin_all_cities_are_returned(self, client, viewer_headers):
+        """Экранам, смотрящим на рынок целиком, нужен полный набор."""
+        response = client.get(
+            "/api/v1/showcase/accommodation-curve",
+            params={"stars": "3"},
+            headers=viewer_headers,
+        )
+
+        codes = {item["city_code"] for item in response.json()["series"]}
+        assert len(codes) == 5
+
+    def test_city_outside_showcase_is_rejected(self, client, viewer_headers):
+        response = client.get(
+            "/api/v1/showcase/accommodation-curve",
+            params={"origin": "AAQ", "stars": "3"},
+            headers=viewer_headers,
+        )
+
+        assert response.status_code in (400, 404, 422)

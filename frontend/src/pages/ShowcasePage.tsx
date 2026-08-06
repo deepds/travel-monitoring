@@ -95,7 +95,10 @@ export default function ShowcasePage() {
     () => api.showcaseTransportCurve({ origin, transport_type: transport }),
     [origin, transport],
   );
-  const stayCurve = useAsync(() => api.showcaseAccommodationCurve({ stars }), [stars]);
+  const stayCurve = useAsync(
+    () => api.showcaseAccommodationCurve({ stars, origin }),
+    [stars, origin],
+  );
 
   /** Дата отправления задает и дату возвращения: длительность в сетке одна. */
   const onDeparture = (value: Dayjs | null) => {

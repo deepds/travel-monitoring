@@ -101,8 +101,13 @@ def showcase_accommodation_curve(
     session: SessionDep,
     _: ViewerDep,
     stars: StarsFilter = StarsFilter.S3,
+    origin: Annotated[
+        str | None, Query(description="Город отправления: исключается из выдачи")
+    ] = None,
     days: Annotated[int, Query(ge=1, le=180, description="Горизонт в днях")] = HORIZON_DAYS,
 ) -> dict[str, Any]:
-    payload = service.accommodation_curve(session, stars=stars, days=days)
+    if origin is not None:
+        _require_showcase_city(origin)
+    payload = service.accommodation_curve(session, origin=origin, stars=stars, days=days)
     payload["disclaimer"] = METRIC_DISCLAIMER_RU
     return payload
