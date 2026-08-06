@@ -217,6 +217,22 @@ docker compose exec -d api python scripts/purge_observations.py --before 2026-08
 который ее закроет, больше нет. За ней выстраивается очередь, и встает все,
 включая плановый сбор.
 
+**Остановить контейнер — не значит остановить запрос.** `docker stop` убивает
+клиента, а серверный процесс PostgreSQL продолжает выполнять начатое: 7 августа
+снятый таким образом `DELETE` прожил еще двадцать минут и заблокировал
+построение индекса, которое ждало завершения чужих транзакций. Смотреть надо в
+саму СУБД:
+
+```bash
+docker exec -i tco-postgres-1 psql -U tco -d tco -c "SELECT pid, state, now()-query_start AS dur, left(query,60) FROM pg_stat_activity WHERE datname='tco' AND state <> 'idle' ORDER BY query_start;"
+```
+
+Снять зависший запрос:
+
+```bash
+docker exec -i tco-postgres-1 psql -U tco -d tco -c "SELECT pg_terminate_backend(PID_ИЗ_ЗАПРОСА_ВЫШЕ);"
+```
+
 Переживают удаление: записи аудита, журнал задач (обнуляется только ссылка) и
 метрики источников — последние сносятся только ключом `--with-source-metrics`,
 когда накоплены за время неверной работы сбора.
