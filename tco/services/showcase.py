@@ -11,6 +11,28 @@
 Всё считается из своего хранилища, а не обращением к источникам: 20 маршрутов
 на 30 дат — это минуты ожидания и неповторяемая цифра при каждом обновлении
 страницы.
+
+ДВЕ ЦИФРЫ ВМЕСТО ОДНОЙ
+
+Медиана систематически выше того, что платит покупатель: человек едет
+туда-обратно одним поездом и берет из дешевой половины выдачи. Поэтому рядом с
+ней всегда идет минимум — «от 12 400 ₽, типично 18 700 ₽». Это же снимает
+главное расхождение с сайтом источника: сайт крупно показывает «от», и пока
+рядом стоит одна медиана, разница читается как ошибка. По Казани минимум
+1 260 ₽ при медиане около 6 900 — расхождение в пять раз на ровном месте.
+
+Важная разница в природе этих чисел. По транспорту и проживанию «от» — это
+конкретное наблюдавшееся предложение. По итогу — сумма минимумов, то есть
+«самый дешевый билет плюс самый дешевый отель»: комбинация, которую человек
+может и не собрать, потому что дешевый рейс бывает в неудобное время, а
+дешевый отель к тому моменту разберут. Итоговое «от» — нижняя граница, а не
+предложение, и подписывать его надо соответственно.
+
+СКОЛЬКО ПРЕДЛОЖЕНИЙ СТОИТ ЗА ЦИФРОЙ
+
+Медиана по четырем предложениям и медиана по сорока выглядят одинаково, а
+доверия заслуживают разного. Размер выборки и число источников идут вместе с
+ценой везде, где она показывается.
 """
 
 from __future__ import annotations
@@ -32,17 +54,18 @@ from tco.core.enums import (
 )
 from tco.core.utils import to_decimal, utcnow
 from tco.db.models.offer import Offer, RailOffer
+from tco.db.models.profile import CalculationProfile
 from tco.db.models.reference import City
 from tco.db.models.run import ScenarioRun
 from tco.db.models.scenario import TravelScenario
 from tco.engine.statistics import percentile
-from tco.db.models.profile import CalculationProfile
 from tco.services.observation_grid import (
     CANONICAL_NIGHTS,
     GRID_PROFILE_CODE,
     HORIZON_DAYS,
     SHOWCASE_ADULTS,
     SHOWCASE_CITIES,
+    STAY_NIGHTS,
 )
 
 #: Звездность графика проживания. Массовый сегмент.
@@ -57,8 +80,17 @@ class _Observation:
     run: ScenarioRun
 
 
-def _latest_runs(session: Session, scenarios: Sequence[TravelScenario]) -> dict[Any, ScenarioRun]:
-    """Последний расчет каждого сценария.
+def _latest_runs(
+    session: Session,
+    scenarios: Sequence[TravelScenario],
+    *,
+    observation_date: date | None = None,
+) -> dict[Any, ScenarioRun]:
+    """Последний расчет каждого сценария, при необходимости — на выбранную дату.
+
+    ``observation_date`` позволяет посмотреть кривую такой, какой она была
+    вчера: наблюдения не переписываются, и вчерашний срез никуда не делся —
+    без отбора по дате мы просто всегда брали последний расчет вообще.
 
     Нумерация окном, а не ``DISTINCT ON``: последний есть только в PostgreSQL,
     а на SQLite молча вырождается в обычный ``DISTINCT`` и вернул бы всю
@@ -68,13 +100,16 @@ def _latest_runs(session: Session, scenarios: Sequence[TravelScenario]) -> dict[
     if not ids:
         return {}
 
-    ranked = select(
+    query = select(
         ScenarioRun.id.label("id"),
         ScenarioRun.scenario_id.label("scenario_id"),
         func.row_number()
         .over(partition_by=ScenarioRun.scenario_id, order_by=ScenarioRun.started_at.desc())
         .label("position"),
-    ).where(ScenarioRun.scenario_id.in_(ids)).subquery()
+    ).where(ScenarioRun.scenario_id.in_(ids))
+    if observation_date is not None:
+        query = query.where(ScenarioRun.observation_date == observation_date)
+    ranked = query.subquery()
 
     latest = select(ranked.c.id).where(ranked.c.position == 1)
     runs = session.scalars(select(ScenarioRun).where(ScenarioRun.id.in_(latest))).all()
@@ -91,11 +126,15 @@ def _grid_scenarios(
 
     Принадлежность к сетке — поле, а не тег: по тегу отбор пришлось бы делать
     в Python, потому что ``JSONB.contains`` работает только в PostgreSQL.
+
+    Мягко удаленные не отсеиваются по ``deleted_at``: состав сетки меняется —
+    пятидневные брони проживания перестали наблюдаться на каждую дату, — и
+    снятый с наблюдения сценарий все еще несет накопленные наблюдения, которые
+    витрина вправе показывать. Отбор по составу делают вызывающие функции.
     """
     return list(
         session.scalars(
             select(TravelScenario)
-            .where(TravelScenario.deleted_at.is_(None))
             .where(TravelScenario.is_showcase_grid.is_(True))
             .where(TravelScenario.departure_date >= departure_from)
             .where(TravelScenario.departure_date <= departure_to)
@@ -155,9 +194,11 @@ def _on_demand_observations(
 def _observations(
     session: Session,
     scenarios: Iterable[TravelScenario],
+    *,
+    observation_date: date | None = None,
 ) -> list[_Observation]:
     scenarios = list(scenarios)
-    runs = _latest_runs(session, scenarios)
+    runs = _latest_runs(session, scenarios, observation_date=observation_date)
     return [
         _Observation(scenario=item, run=runs[item.id])
         for item in scenarios
@@ -177,6 +218,59 @@ def _city_names(session: Session) -> dict[str, str]:
     }
 
 
+def _is_stay(scenario: TravelScenario) -> bool:
+    """Сценарий наблюдает только проживание."""
+    return scenario.transport_type is None and scenario.accommodation_type is not None
+
+
+def _price_block(
+    *,
+    median: Any,
+    minimum: Any,
+    offers: int,
+    sources: int,
+    run_id: Any,
+    per_unit: float | None = None,
+) -> dict[str, Any] | None:
+    """Цена вместе с тем, на чем она стоит.
+
+    ``None`` возвращается там, где медианы нет: цифра без нее не показывается,
+    а причина отсутствия объясняется отдельно — пустая клетка без объяснения
+    читается как «поездка бесплатна».
+    """
+    value = _money(median)
+    if value is None:
+        return None
+    return {
+        "median": value,
+        # Самое дешевое допущенное предложение — уже после фильтров и отсечения
+        # выбросов, поэтому льготные места и распроданные вагоны его не
+        # занижают: они отсекаются профилем раньше.
+        "min": _money(minimum),
+        "offers": int(offers or 0),
+        "sources": int(sources or 0),
+        "run_id": str(run_id) if run_id else None,
+        **({"per_unit": per_unit} if per_unit is not None else {}),
+    }
+
+
+def _stay_per_night(run: ScenarioRun, scenario: TravelScenario) -> tuple[float | None, float | None]:
+    """Цена ночи и минимум за ночь по наблюдению проживания.
+
+    Наблюдения бывают двух длительностей: однодневные (основной ряд) и
+    пятидневные (контрольные). Приведение к ночи делает их сопоставимыми, но
+    не одинаковыми: цена ночи в пятидневной броне усреднена по будням и
+    выходным сразу, и именно поэтому график строится по однодневным.
+    """
+    nights = max(1, int(scenario.nights or 1))
+    median = _money(run.hotel_median)
+    minimum = _money(run.hotel_min)
+    return (
+        median / nights if median is not None else None,
+        minimum / nights if minimum is not None else None,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Блок 1. Варианты отдыха на выбранные даты
 # --------------------------------------------------------------------------- #
@@ -190,30 +284,43 @@ def options(
     return_date: date,
     transport_type: TransportType,
     stars: StarsFilter,
+    observation_date: date | None = None,
 ) -> dict[str, Any]:
     """Варианты отдыха из выбранного города на выбранные даты.
 
     Транспорт и проживание наблюдаются разными сценариями и складываются здесь:
     проживание от города отправления не зависит, и наблюдать его на каждый
     маршрут значило бы собирать одно и то же по четыре раза.
+
+    Длительность поездки задается пользователем и с наблюдаемой совпадать не
+    обязана. Проживание в этом случае считается как медиана ночи на число
+    ночей — человек, впрочем, платит за бронь, а не за сумму ночей, поэтому
+    цифра помечается оценкой. Транспорт наблюдается только на каноническую
+    длительность, и на других датах его в сетке просто нет: это честно
+    показывается пустой клеткой, а не подставленной цифрой с соседней даты.
     """
     names = _city_names(session)
+    nights = (return_date - departure_date).days
     scenarios = _grid_scenarios(
         session, departure_from=departure_date, departure_to=departure_date
     )
-    observed = _observations(session, scenarios)
+    observed = _observations(session, scenarios, observation_date=observation_date)
 
     transport: dict[str, _Observation] = {}
     accommodation: dict[str, _Observation] = {}
     for item in observed:
         scenario = item.scenario
-        if scenario.return_date != return_date:
-            continue
         if scenario.transport_type == transport_type.value:
-            if scenario.origin_city.code == origin:
+            # Транспорт наблюдается круговым тарифом на каноническую
+            # длительность: на других датах возврата такого наблюдения нет.
+            if scenario.return_date == return_date and scenario.origin_city.code == origin:
                 transport[scenario.destination_city.code] = item
-        elif scenario.transport_type is None and scenario.stars == stars.value:
-            accommodation[scenario.destination_city.code] = item
+        elif _is_stay(scenario) and scenario.stars == stars.value:
+            # Из двух длительностей берется однодневная: она основной ряд, а
+            # пятидневная контрольная и наблюдается лишь на трех датах.
+            current = accommodation.get(scenario.destination_city.code)
+            if current is None or scenario.nights < current.scenario.nights:
+                accommodation[scenario.destination_city.code] = item
 
     # Даты вне сетки покрываются разовым расчетом — иначе кнопка «Рассчитать
     # эти даты» отрабатывала бы вхолостую: расчет проходил, а витрина его не
@@ -233,32 +340,86 @@ def options(
             continue
         transport_run = transport.get(code)
         stay_run = accommodation.get(code)
-        transport_cost = _money(transport_run.run.transport_median) if transport_run else None
-        stay_cost = _money(stay_run.run.hotel_median) if stay_run else None
+        once = on_demand.get(code)
+        from_on_demand = False
+
+        transport_price = (
+            _price_block(
+                median=transport_run.run.transport_median,
+                minimum=transport_run.run.transport_min,
+                offers=transport_run.run.transport_offer_count,
+                sources=transport_run.run.transport_source_count,
+                run_id=transport_run.run.id,
+            )
+            if transport_run
+            else None
+        )
+
+        stay_price = None
+        stay_estimated = False
+        if stay_run is not None:
+            per_night, min_per_night = _stay_per_night(stay_run.run, stay_run.scenario)
+            if per_night is not None:
+                stay_estimated = stay_run.scenario.nights != nights
+                stay_price = {
+                    "median": per_night * nights,
+                    "min": min_per_night * nights if min_per_night is not None else None,
+                    "offers": int(stay_run.run.hotel_offer_count or 0),
+                    "sources": int(stay_run.run.hotel_source_count or 0),
+                    "run_id": str(stay_run.run.id),
+                    "per_unit": per_night,
+                    # Оценка, а не наблюдение: человек платит за бронь, а не за
+                    # сумму ночей, и короткие брони отели продают дороже.
+                    "estimated": stay_estimated,
+                    "observed_nights": int(stay_run.scenario.nights or 1),
+                }
 
         # Наблюдение сетки в приоритете: разовый расчет дополняет его, а не
         # подменяет. Иначе один пересчет менял бы цифру уже показанного ряда.
-        once = on_demand.get(code)
-        from_on_demand = False
         if once is not None:
-            if transport_cost is None:
-                transport_cost = _money(once.run.transport_median)
-                from_on_demand = transport_cost is not None
-            if stay_cost is None:
-                stay_cost = _money(once.run.hotel_median)
-                from_on_demand = from_on_demand or stay_cost is not None
+            if transport_price is None:
+                transport_price = _price_block(
+                    median=once.run.transport_median,
+                    minimum=once.run.transport_min,
+                    offers=once.run.transport_offer_count,
+                    sources=once.run.transport_source_count,
+                    run_id=once.run.id,
+                )
+                from_on_demand = from_on_demand or transport_price is not None
+            if stay_price is None:
+                stay_price = _price_block(
+                    median=once.run.hotel_median,
+                    minimum=once.run.hotel_min,
+                    offers=once.run.hotel_offer_count,
+                    sources=once.run.hotel_source_count,
+                    run_id=once.run.id,
+                )
+                if stay_price is not None:
+                    stay_price["estimated"] = False
+                    stay_price["observed_nights"] = nights
+                    from_on_demand = True
 
-        total = (
-            transport_cost + stay_cost
-            if transport_cost is not None and stay_cost is not None
-            else None
-        )
+        total = None
+        if transport_price and stay_price:
+            total = {
+                "median": transport_price["median"] + stay_price["median"],
+                # Сумма минимумов — нижняя граница, а не предложение: дешевый
+                # рейс бывает в неудобное время, а дешевый отель к тому моменту
+                # разберут. Подписывать ее следует «не дешевле чем».
+                "min": (
+                    transport_price["min"] + stay_price["min"]
+                    if transport_price["min"] is not None and stay_price["min"] is not None
+                    else None
+                ),
+                "estimated": stay_estimated,
+            }
+
         items.append(
             {
                 "destination_code": code,
                 "destination_name": names.get(code, code),
-                "transport": transport_cost,
-                "accommodation": stay_cost,
+                "transport": transport_price,
+                "accommodation": stay_price,
                 "total": total,
                 # Разовый расчет — это один снимок по запросу, а не наблюдение
                 # сетки. Интерфейс должен иметь возможность это показать.
@@ -267,7 +428,10 @@ def options(
                 # читается как «поездка бесплатна».
                 "missing": [
                     name
-                    for name, value in (("transport", transport_cost), ("accommodation", stay_cost))
+                    for name, value in (
+                        ("transport", transport_price),
+                        ("accommodation", stay_price),
+                    )
                     if value is None
                 ],
             }
@@ -286,13 +450,15 @@ def options(
         "profile_id": str(profile.id) if profile else None,
         "departure_date": departure_date.isoformat(),
         "return_date": return_date.isoformat(),
-        "nights": (return_date - departure_date).days,
+        "observation_date": observation_date.isoformat() if observation_date else None,
+        "nights": nights,
         "transport_type": transport_type.value,
         "stars": stars.value,
         "travelers": SHOWCASE_ADULTS,
         "items": items,
         "available": any(item["total"] is not None for item in items),
         "grid_nights": CANONICAL_NIGHTS,
+        "stay_nights_observed": STAY_NIGHTS,
     }
 
 
@@ -301,10 +467,10 @@ def options(
 # --------------------------------------------------------------------------- #
 
 
-def _one_way_medians(
+def _one_way_prices(
     session: Session, snapshot_ids: Sequence[Any]
-) -> dict[Any, float]:
-    """Медиана цены поездки в одну сторону по каждому снимку.
+) -> dict[Any, tuple[float, float]]:
+    """Медиана и минимум цены поездки в одну сторону по каждому снимку.
 
     Расчет хранит только круговую стоимость, поэтому одностороннюю приходится
     считать из предложений. Отдельно наблюдать поездку в один конец не нужно:
@@ -332,13 +498,18 @@ def _one_way_medians(
         if value is not None:
             buckets.setdefault(snapshot_id, []).append(value)
 
-    medians: dict[Any, float] = {}
-    for snapshot_id, prices in buckets.items():
-        median = percentile(sorted(prices), 0.5, "LINEAR")
-        if median is not None:
-            # Цена за место, а состав тургруппы задан методикой витрины.
-            medians[snapshot_id] = float(median) * SHOWCASE_ADULTS
-    return medians
+    prices: dict[Any, tuple[float, float]] = {}
+    for snapshot_id, values in buckets.items():
+        ordered = sorted(values)
+        median = percentile(ordered, 0.5, "LINEAR")
+        if median is None:
+            continue
+        # Цена за место, а состав тургруппы задан методикой витрины.
+        prices[snapshot_id] = (
+            float(median) * SHOWCASE_ADULTS,
+            float(ordered[0]) * SHOWCASE_ADULTS,
+        )
+    return prices
 
 
 def transport_curve(
@@ -348,6 +519,7 @@ def transport_curve(
     transport_type: TransportType = TransportType.RAIL,
     days: int = HORIZON_DAYS,
     today: date | None = None,
+    observation_date: date | None = None,
 ) -> dict[str, Any]:
     """Цена проезда по датам отправления.
 
@@ -369,22 +541,17 @@ def transport_curve(
     scenarios = [
         item
         for item in _grid_scenarios(session, departure_from=today, departure_to=horizon)
-        if item.transport_type == transport_type.value
-        and item.origin_city.code == origin
+        if item.transport_type == transport_type.value and item.origin_city.code == origin
     ]
-    observed = _observations(session, scenarios)
+    observed = _observations(session, scenarios, observation_date=observation_date)
     is_one_way = transport_type == TransportType.RAIL
-    medians = (
-        _one_way_medians(
+    one_way = (
+        _one_way_prices(
             session,
             [item.run.market_snapshot_id for item in observed if item.run.market_snapshot_id],
         )
         if is_one_way
-        else {
-            item.run.market_snapshot_id: value
-            for item in observed
-            if (value := _money(item.run.transport_median)) is not None
-        }
+        else {}
     )
 
     series: dict[str, list[dict[str, Any]]] = {
@@ -394,11 +561,28 @@ def transport_curve(
         code = item.scenario.destination_city.code
         if code not in series:
             continue
-        price = medians.get(item.run.market_snapshot_id)
-        if price is None:
-            continue
+        run = item.run
+        if is_one_way:
+            pair = one_way.get(run.market_snapshot_id)
+            if pair is None:
+                continue
+            median, minimum = pair
+        else:
+            median = _money(run.transport_median)
+            minimum = _money(run.transport_min)
+            if median is None:
+                continue
         series[code].append(
-            {"departure_date": item.scenario.departure_date.isoformat(), "price": price}
+            {
+                "departure_date": item.scenario.departure_date.isoformat(),
+                "price": median,
+                "min": minimum,
+                "offers": int(run.transport_offer_count or 0),
+                "sources": int(run.transport_source_count or 0),
+                # Без идентификатора расчета от точки графика некуда перейти, и
+                # разбор цены остается недостижим оттуда, где вопрос возникает.
+                "run_id": str(run.id),
+            }
         )
 
     return {
@@ -408,6 +592,7 @@ def transport_curve(
         "direction": "ONE_WAY" if is_one_way else "ROUND_TRIP",
         "travelers": SHOWCASE_ADULTS,
         "horizon_days": days,
+        "observation_date": observation_date.isoformat() if observation_date else None,
         "series": [
             {
                 "destination_code": code,
@@ -426,16 +611,19 @@ def accommodation_curve(
     stars: StarsFilter = CURVE_STARS,
     days: int = HORIZON_DAYS,
     today: date | None = None,
+    observation_date: date | None = None,
 ) -> dict[str, Any]:
-    """Медиана проживания по датам заезда по городам, куда можно поехать.
+    """Медиана проживания за одну ночь по датам заезда.
 
-    Город отправления исключается: витрина отвечает на вопрос «куда поехать из
-    своего города», и отель в нем вариантом поездки не является. Без этого
-    график проживания показывал пять городов там, где график проезда показывает
-    четыре, и лишняя кривая читалась как еще одно направление.
+    Показываются все пять городов независимо от того, откуда собрался ехать
+    пользователь: график отвечает на вопрос «когда в городе дорого», а не
+    «куда поехать», и свой город в нем такой же ответ, как чужой.
 
-    ``origin`` необязателен: без него отдаются все пять городов — это нужно
-    экранам, которые смотрят на рынок целиком, а не из чьей-то точки.
+    Одна ночь, а не пять. Цена ночи внутри пятидневной брони усреднена по
+    будням и выходным сразу — заезд в среду означает, что в брони среда,
+    четверг, пятница, суббота и воскресенье, — и на графике по датам заезда это
+    размазывает недельную волну по пяти соседним точкам. Однодневная бронь дает
+    одну точку на одну ночь и один день недели.
     """
     today = today or utcnow().date()
     horizon = today + timedelta(days=days)
@@ -444,28 +632,36 @@ def accommodation_curve(
     scenarios = [
         item
         for item in _grid_scenarios(session, departure_from=today, departure_to=horizon)
-        if item.transport_type is None and item.stars == stars.value
+        if _is_stay(item) and item.stars == stars.value and item.nights == STAY_NIGHTS
     ]
-    observed = _observations(session, scenarios)
+    observed = _observations(session, scenarios, observation_date=observation_date)
 
-    series: dict[str, list[dict[str, Any]]] = {
-        code: [] for code in SHOWCASE_CITIES if code != origin
-    }
+    series: dict[str, list[dict[str, Any]]] = {code: [] for code in SHOWCASE_CITIES}
     for item in observed:
         code = item.scenario.destination_city.code
-        price = _money(item.run.hotel_median)
-        if code not in series or price is None:
+        if code not in series:
+            continue
+        median, minimum = _stay_per_night(item.run, item.scenario)
+        if median is None:
             continue
         series[code].append(
-            {"check_in": item.scenario.departure_date.isoformat(), "price": price}
+            {
+                "check_in": item.scenario.departure_date.isoformat(),
+                "price": median,
+                "min": minimum,
+                "offers": int(item.run.hotel_offer_count or 0),
+                "sources": int(item.run.hotel_source_count or 0),
+                "run_id": str(item.run.id),
+            }
         )
 
     return {
         "origin_code": origin,
         "stars": stars.value,
-        "nights": CANONICAL_NIGHTS,
+        "nights": STAY_NIGHTS,
         "travelers": SHOWCASE_ADULTS,
         "horizon_days": days,
+        "observation_date": observation_date.isoformat() if observation_date else None,
         "series": [
             {
                 "city_code": code,
@@ -474,4 +670,105 @@ def accommodation_curve(
             }
             for code, points in series.items()
         ],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Даты наблюдения
+# --------------------------------------------------------------------------- #
+
+
+def observation_dates(session: Session, *, limit: int = 30) -> dict[str, Any]:
+    """Даты, на которые есть наблюдения сетки.
+
+    Нужны переключателю даты построения графика: без списка пустой график
+    неотличим от отсутствия наблюдений, и пользователь не может понять, выбрал
+    он день без данных или сломалась витрина.
+    """
+    grid = select(TravelScenario.id).where(TravelScenario.is_showcase_grid.is_(True))
+    rows = session.execute(
+        select(ScenarioRun.observation_date, func.count())
+        .where(ScenarioRun.scenario_id.in_(grid))
+        .group_by(ScenarioRun.observation_date)
+        .order_by(ScenarioRun.observation_date.desc())
+        .limit(limit)
+    ).all()
+    return {
+        "items": [
+            {"observation_date": day.isoformat(), "runs": int(count)} for day, count in rows
+        ],
+        "latest": rows[0][0].isoformat() if rows else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Расхождение оценки с реальной бронью
+# --------------------------------------------------------------------------- #
+
+
+def stay_estimate_accuracy(
+    session: Session, *, days: int = HORIZON_DAYS, today: date | None = None
+) -> dict[str, Any]:
+    """Насколько «ночь × число ночей» расходится с ценой пятидневной брони.
+
+    Витрина считает стоимость проживания из цены одной ночи. Отели продают
+    короткие брони дороже, поэтому такая оценка систематически смещена, и
+    величину смещения нельзя предполагать — ее наблюдают контрольные
+    пятидневные брони. Это постоянный показатель точности, а не разовый замер.
+    """
+    today = today or utcnow().date()
+    horizon = today + timedelta(days=days)
+    scenarios = [
+        item
+        for item in _grid_scenarios(session, departure_from=today, departure_to=horizon)
+        if _is_stay(item)
+    ]
+    observed = _observations(session, scenarios)
+
+    single: dict[tuple[str, str, str], float] = {}
+    control: dict[tuple[str, str, str], tuple[float, int]] = {}
+    for item in observed:
+        key = (
+            item.scenario.destination_city.code,
+            item.scenario.stars,
+            item.scenario.departure_date.isoformat(),
+        )
+        median = _money(item.run.hotel_median)
+        if median is None:
+            continue
+        nights = max(1, int(item.scenario.nights or 1))
+        if nights == STAY_NIGHTS:
+            single[key] = median
+        else:
+            control[key] = (median, nights)
+
+    rows: list[dict[str, Any]] = []
+    for key, (booking_price, nights) in sorted(control.items()):
+        per_night = single.get(key)
+        if per_night is None:
+            continue
+        estimate = per_night * nights
+        rows.append(
+            {
+                "city_code": key[0],
+                "stars": key[1],
+                "check_in": key[2],
+                "nights": nights,
+                "estimate": estimate,
+                "observed_booking": booking_price,
+                "deviation": round((estimate - booking_price) / booking_price, 4)
+                if booking_price
+                else None,
+            }
+        )
+
+    deviations = [row["deviation"] for row in rows if row["deviation"] is not None]
+    return {
+        "pairs": len(rows),
+        "median_deviation": (
+            float(percentile(sorted(to_decimal(item) for item in deviations), 0.5, "LINEAR"))
+            if deviations
+            else None
+        ),
+        "rows": rows,
     }

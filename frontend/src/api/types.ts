@@ -697,12 +697,36 @@ export interface ShowcaseCities {
   horizon_days: number;
 }
 
+/**
+ * Цена вместе с тем, на чем она стоит.
+ *
+ * Медиана идет в паре с минимумом: человек едет туда-обратно одним поездом и
+ * берет из дешевой половины выдачи, поэтому одна медиана систематически выше
+ * того, что он платит. Рядом всегда число предложений и источников — медиана
+ * по четырем и по сорока выглядят одинаково, а доверия заслуживают разного.
+ */
+export interface ShowcasePrice {
+  median: number;
+  /** Самое дешевое допущенное предложение: уже после фильтров и выбросов. */
+  min: number | null;
+  offers: number;
+  sources: number;
+  /** Расчет, из которого взята цифра: без него от нее некуда перейти. */
+  run_id: string | null;
+  /** Цена единицы наблюдения — ночи у проживания. */
+  per_unit?: number;
+  /** Цифра получена пересчетом «ночь × число ночей», а не наблюдением брони. */
+  estimated?: boolean;
+  observed_nights?: number;
+}
+
 export interface ShowcaseOption {
   destination_code: string;
   destination_name: string;
-  transport: number | null;
-  accommodation: number | null;
-  total: number | null;
+  transport: ShowcasePrice | null;
+  accommodation: ShowcasePrice | null;
+  /** У итога `min` — сумма минимумов, то есть нижняя граница, а не предложение. */
+  total: (ShowcasePrice & { estimated?: boolean }) | null;
   /** Каких компонент не хватило: пустая строка иначе читается как бесплатная поездка. */
   missing: string[];
   /** Число получено разовым расчетом на дату вне сетки, а не наблюдением. */
@@ -716,6 +740,7 @@ export interface ShowcaseOptions {
   profile_id: string | null;
   departure_date: string;
   return_date: string;
+  observation_date: string | null;
   nights: number;
   transport_type: string;
   stars: string;
@@ -723,7 +748,16 @@ export interface ShowcaseOptions {
   items: ShowcaseOption[];
   available: boolean;
   grid_nights: number;
+  stay_nights_observed: number;
   disclaimer: string;
+}
+
+export interface ShowcaseCurvePoint {
+  price: number;
+  min: number | null;
+  offers: number;
+  sources: number;
+  run_id: string;
 }
 
 export interface ShowcaseTransportCurve {
@@ -733,10 +767,11 @@ export interface ShowcaseTransportCurve {
   direction: string;
   travelers: number;
   horizon_days: number;
+  observation_date: string | null;
   series: {
     destination_code: string;
     destination_name: string;
-    points: { departure_date: string; price: number }[];
+    points: (ShowcaseCurvePoint & { departure_date: string })[];
   }[];
   disclaimer: string;
 }
@@ -746,10 +781,119 @@ export interface ShowcaseAccommodationCurve {
   nights: number;
   travelers: number;
   horizon_days: number;
+  observation_date: string | null;
   series: {
     city_code: string;
     city_name: string;
-    points: { check_in: string; price: number }[];
+    points: (ShowcaseCurvePoint & { check_in: string })[];
   }[];
   disclaimer: string;
+}
+
+export interface ShowcaseObservationDates {
+  items: { observation_date: string; runs: number }[];
+  latest: string | null;
+}
+
+/** Клетка матрицы покрытия: состояние наблюдения и размер выборки за ним. */
+export interface CoverageCell {
+  date: string;
+  state: 'OK' | 'THIN' | 'PARTIAL' | 'NO_DATA' | 'NOT_OBSERVED';
+  run_id: string | null;
+  price: number | null;
+  offers: number;
+  sources: number;
+}
+
+export interface CoverageMatrix {
+  observation_date: string | null;
+  dates: string[];
+  thin_threshold: number;
+  transport: {
+    origin_code: string;
+    origin_name: string;
+    destination_code: string;
+    destination_name: string;
+    transport_type: string;
+    cells: CoverageCell[];
+  }[];
+  accommodation: {
+    city_code: string;
+    city_name: string;
+    stars: string;
+    cells: CoverageCell[];
+  }[];
+  legend: Record<string, string>;
+}
+
+export interface ShowcaseQuality {
+  date: string;
+  planned: number;
+  collected: number;
+  missing: number;
+  missing_ratio: number;
+  duration_minutes: number | null;
+  snapshot_statuses: Record<string, number>;
+  run_statuses: Record<string, number>;
+  partial_source_results: number;
+  avg_transport_offers: number | null;
+  avg_accommodation_offers: number | null;
+  source_outcomes: {
+    source_code: string;
+    offer_type: string;
+    outcome: string;
+    count: number;
+    meaning: string;
+  }[];
+  failed: boolean;
+  stay_estimate_accuracy: {
+    pairs: number;
+    median_deviation: number | null;
+    rows: {
+      city_code: string;
+      stars: string;
+      check_in: string;
+      nights: number;
+      estimate: number;
+      observed_booking: number;
+      deviation: number | null;
+    }[];
+  };
+}
+
+/** Шаг денежной воронки: во сколько обошлось правило отбора. */
+export interface FunnelStep {
+  step: string;
+  title: string;
+  removed: number;
+  reasons: Record<string, number>;
+  count: number;
+  median: number | null;
+  min: number | null;
+  max: number | null;
+  p25: number | null;
+  p75: number | null;
+  median_delta?: number | null;
+}
+
+export interface RunFunnel {
+  run_id: string;
+  snapshot_id?: string;
+  available: boolean;
+  reason?: string;
+  component?: string;
+  steps?: FunnelStep[];
+}
+
+export interface RunWhatIf {
+  run_id: string;
+  available: boolean;
+  reason?: string;
+  component?: string;
+  official?: FunnelStep;
+  revised?: FunnelStep;
+  median_delta?: number | null;
+  preliminary?: boolean;
+  note?: string;
+  switches?: { kind: string; code: string; title: string; offers: number }[];
 }

@@ -12,12 +12,20 @@ from sqlalchemy.orm import Session
 
 from tco.api.deps import PaginationDep, SessionDep, ViewerDep, get_or_404
 from tco.api.serializers import run_brief, run_full, scenario_full, snapshot_brief
-from tco.core.enums import ConfidenceLevel, OfferType, RunStatus, RunType, TransportType
+from tco.core.enums import (
+    ComponentType,
+    ConfidenceLevel,
+    OfferType,
+    RunStatus,
+    RunType,
+    TransportType,
+)
 from tco.core.logging import get_logger
 from tco.db.models.reference import City
 from tco.db.models.run import ScenarioRun
 from tco.db.models.scenario import TravelScenario
 from tco.db.models.snapshot import MarketSnapshot
+from tco.services import breakdown
 from tco.services import offers as offer_service
 from tco.version import METRIC_DISCLAIMER_RU, METRIC_TITLE_RU
 
@@ -155,6 +163,104 @@ def _run_snapshot(session: Session, run: ScenarioRun) -> MarketSnapshot | None:
     if not run.market_snapshot_id:
         return None
     return session.get(MarketSnapshot, run.market_snapshot_id)
+
+
+def _component_of(run: ScenarioRun, requested: ComponentType | None) -> ComponentType:
+    """Какую компоненту разбирать, если пользователь не указал.
+
+    Односоставный сценарий не оставляет выбора, и спрашивать о нем незачем:
+    сетка витрины держит проезд и проживание в разных сценариях.
+    """
+    if requested is not None:
+        return requested
+    scenario = run.scenario
+    if scenario is not None and scenario.transport_type is None:
+        return ComponentType.ACCOMMODATION
+    return ComponentType.TRANSPORT
+
+
+@router.get("/{run_id}/funnel", summary="Денежная воронка отбора")
+def run_funnel(
+    run_id: str,
+    session: SessionDep,
+    _: ViewerDep,
+    component: Annotated[
+        ComponentType | None, Query(description="Компонента: транспорт или проживание")
+    ] = None,
+) -> dict[str, Any]:
+    """Как менялась бы цифра на каждом шаге отбора.
+
+    Не счетчики отброшенного, а цена каждого правила в рублях: медиана до шага
+    и после него. Ровно эту работу до сих пор делали запросами к базе руками.
+    """
+    run = get_or_404(session, ScenarioRun, run_id, "Расчет")
+    snapshot = _run_snapshot(session, run)
+    if snapshot is None:
+        return {"run_id": str(run.id), "available": False, "reason": "У расчета нет снимка"}
+    if not snapshot.offers_available:
+        return {
+            "run_id": str(run.id),
+            "available": False,
+            "reason": "Предложения снимка вышли за срок хранения",
+        }
+
+    payload = breakdown.funnel(
+        session, snapshot_id=snapshot.id, component=_component_of(run, component)
+    )
+    payload.update({"run_id": str(run.id), "snapshot_id": str(snapshot.id), "available": True})
+    return payload
+
+
+@router.get("/{run_id}/what-if", summary="Пересчет без выбранных правил")
+def run_what_if(
+    run_id: str,
+    session: SessionDep,
+    _: ViewerDep,
+    component: Annotated[ComponentType | None, Query()] = None,
+    ignore_filter: Annotated[
+        list[str] | None,
+        Query(description="Коды правил методики, которые не применять"),
+    ] = None,
+    ignore_exclusion: Annotated[
+        list[str] | None,
+        Query(description="Коды причин исключения, которые не применять"),
+    ] = None,
+) -> dict[str, Any]:
+    """«А если считать с возвратными тарифами» — цифра пересчитывается на лету.
+
+    Считается по сохраненным предложениям снимка: каждое хранится с пометкой,
+    почему оно отброшено, поэтому обращений к источникам здесь нет. Результат
+    предварительный и официальную цифру не подменяет — методика меняется
+    только новой версией профиля.
+    """
+    run = get_or_404(session, ScenarioRun, run_id, "Расчет")
+    snapshot = _run_snapshot(session, run)
+    if snapshot is None or not snapshot.offers_available:
+        return {
+            "run_id": str(run.id),
+            "available": False,
+            "reason": "Предложения снимка недоступны — пересчет невозможен",
+        }
+
+    component_type = _component_of(run, component)
+    payload = breakdown.what_if(
+        session,
+        snapshot_id=snapshot.id,
+        component=component_type,
+        ignore_filter_reasons=ignore_filter or (),
+        ignore_exclusion_reasons=ignore_exclusion or (),
+    )
+    payload.update(
+        {
+            "run_id": str(run.id),
+            "snapshot_id": str(snapshot.id),
+            "available": True,
+            "switches": breakdown.available_switches(
+                session, snapshot_id=snapshot.id, component=component_type
+            ),
+        }
+    )
+    return payload
 
 
 @router.get("/{run_id}/offers", summary="Предложения, на которых построен расчет")

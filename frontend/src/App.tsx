@@ -1,8 +1,8 @@
 import {
   ApiOutlined, AreaChartOutlined, AuditOutlined, CalculatorOutlined,
   CameraOutlined, CompassOutlined, DashboardOutlined, DatabaseOutlined, DownloadOutlined,
-  ExperimentOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined,
-  UnorderedListOutlined,
+  ExperimentOutlined, FileSearchOutlined, FundProjectionScreenOutlined, LogoutOutlined,
+  SettingOutlined, TableOutlined, ThunderboltOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import { Alert, Layout, Menu, Spin, Tag, Typography } from 'antd';
 import { useMemo } from 'react';
@@ -14,7 +14,9 @@ import { useTheme } from '@/theme/ThemeContext';
 import { ENVIRONMENT_LABEL, USER_ROLE_LABEL, labelOf } from '@/utils/format';
 import AuditPage from '@/pages/AuditPage';
 import ConstructorPage from '@/pages/ConstructorPage';
+import CoveragePage from '@/pages/CoveragePage';
 import DashboardPage from '@/pages/DashboardPage';
+import PriceBreakdownPage from '@/pages/PriceBreakdownPage';
 import ExportsPage from '@/pages/ExportsPage';
 import JobsPage from '@/pages/JobsPage';
 import LoginPage from '@/pages/LoginPage';
@@ -40,19 +42,27 @@ interface NavItem {
 }
 
 /**
- * Основная навигация — четыре пункта: стоимость, расчет, сценарии, результаты.
+ * Основная навигация — четыре пункта, и все четыре про одну цифру.
  *
- * Технические экраны (снимки, источники, профили, задачи, экспорт, аудит) не
- * удалены, а скрыты под роль ADMIN: они нужны при разборе инцидента, но для
- * бизнес-пользователя это шум, за которым теряется сама цифра стоимости.
- * Маршруты остаются доступны по прямой ссылке.
+ * Витрина показывает цену, разбор объясняет, из чего она сложилась,
+ * первоисточник показывает сами предложения, покрытие — где цифры нет вовсе.
+ * Это один путь от вопроса к ответу, а не четыре раздела.
+ *
+ * Технические экраны (дашборд наблюдения рынка, сценарии, расчеты, снимки,
+ * источники, профили, задачи, экспорт, аудит) не удалены, а скрыты под роль
+ * ADMIN: они нужны при разборе инцидента, но для бизнес-пользователя это шум,
+ * за которым теряется сама цифра. Маршруты остаются доступны по прямой ссылке,
+ * и возврат — один переключатель роли.
  */
 const NAV: NavItem[] = [
   { key: '/showcase', icon: <CompassOutlined />, label: 'Куда поехать', minRole: 'VIEWER' },
-  { key: '/dashboard', icon: <DashboardOutlined />, label: 'Дашборд', minRole: 'VIEWER' },
-  { key: '/constructor', icon: <CalculatorOutlined />, label: 'Расчет сценария', minRole: 'ANALYST' },
-  { key: '/scenarios', icon: <UnorderedListOutlined />, label: 'Сценарии', minRole: 'VIEWER' },
-  { key: '/runs', icon: <AreaChartOutlined />, label: 'Расчеты', minRole: 'VIEWER' },
+  { key: '/breakdown', icon: <FundProjectionScreenOutlined />, label: 'Разбор цены', minRole: 'VIEWER' },
+  { key: '/source', icon: <FileSearchOutlined />, label: 'Первоисточник', minRole: 'VIEWER' },
+  { key: '/coverage', icon: <TableOutlined />, label: 'Покрытие и качество', minRole: 'VIEWER' },
+  { key: '/dashboard', icon: <DashboardOutlined />, label: 'Дашборд', minRole: 'ADMIN' },
+  { key: '/constructor', icon: <CalculatorOutlined />, label: 'Расчет сценария', minRole: 'ADMIN' },
+  { key: '/scenarios', icon: <UnorderedListOutlined />, label: 'Сценарии', minRole: 'ADMIN' },
+  { key: '/runs', icon: <AreaChartOutlined />, label: 'Расчеты', minRole: 'ADMIN' },
   { key: '/snapshots', icon: <CameraOutlined />, label: 'Снимки рынка', minRole: 'ADMIN' },
   { key: '/sources', icon: <ApiOutlined />, label: 'Источники', minRole: 'ADMIN' },
   { key: '/profiles', icon: <ExperimentOutlined />, label: 'Профили расчета', minRole: 'ADMIN' },
@@ -87,10 +97,15 @@ export default function App() {
 
   if (!principal) return <LoginPage />;
 
-  const selected = NAV.map((item) => item.key)
-    .filter((key) => location.pathname.startsWith(key))
-    .sort((a, b) => b.length - a.length)
-    .slice(0, 1);
+  // На корне подсвечивается витрина: это один и тот же экран, и пустое меню
+  // на главной странице выглядело бы сбоем навигации.
+  const selected =
+    location.pathname === '/'
+      ? ['/showcase']
+      : NAV.map((item) => item.key)
+          .filter((key) => location.pathname.startsWith(key))
+          .sort((a, b) => b.length - a.length)
+          .slice(0, 1);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -155,8 +170,17 @@ export default function App() {
             ) : null}
 
             <Routes>
-              <Route path="/" element={<Navigate to="/showcase" replace />} />
+              {/* Витрина — корневой маршрут: это главная страница платформы,
+                  а не одна из шестнадцати. */}
+              <Route path="/" element={<ShowcasePage />} />
               <Route path="/showcase" element={<ShowcasePage />} />
+              {/* Разбор и первоисточник — одна страница с разными вкладками:
+                  из разбора всегда есть переход к самим предложениям. */}
+              <Route path="/breakdown" element={<PriceBreakdownPage />} />
+              <Route path="/breakdown/:id" element={<PriceBreakdownPage />} />
+              <Route path="/source" element={<PriceBreakdownPage />} />
+              <Route path="/source/:id" element={<PriceBreakdownPage />} />
+              <Route path="/coverage" element={<CoveragePage />} />
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/constructor" element={<ConstructorPage />} />
               <Route path="/scenarios" element={<ScenariosPage />} />
@@ -171,7 +195,7 @@ export default function App() {
               <Route path="/exports" element={<ExportsPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/audit" element={<AuditPage />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
         </Content>

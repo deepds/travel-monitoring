@@ -12,6 +12,7 @@ import type {
   RunBrief, RunOffersResponse, Scenario, ScenarioBrief, ScenarioFootprint, Snapshot,
   SnapshotBrief, SnapshotSourceRow, Source, SourceBreakdownRow, SourceConfidence,
   ShowcaseAccommodationCurve, ShowcaseCities, ShowcaseOptions, ShowcaseTransportCurve,
+  ShowcaseObservationDates, CoverageMatrix, ShowcaseQuality, RunFunnel, RunWhatIf,
   SourceOverviewRow, Template, TokenResponse, VersionInfo,
 } from './types';
 
@@ -192,6 +193,12 @@ export const api = {
     get<ShowcaseTransportCurve>('/showcase/transport-curve', query),
   showcaseAccommodationCurve: (query?: Query) =>
     get<ShowcaseAccommodationCurve>('/showcase/accommodation-curve', query),
+  showcaseObservationDates: (query?: Query) =>
+    get<ShowcaseObservationDates>('/showcase/observation-dates', query),
+  showcaseCoverage: (query?: Query) => get<CoverageMatrix>('/showcase/coverage', query),
+  showcaseQuality: (query?: Query) => get<ShowcaseQuality>('/showcase/quality', query),
+  runFunnel: (id: string, query?: Query) => get<RunFunnel>(`/scenario-runs/${id}/funnel`, query),
+  runWhatIf: (id: string, query?: Query) => get<RunWhatIf>(`/scenario-runs/${id}/what-if`, query),
   kpi: (query?: Query) => get<Record<string, any>>('/dashboard/kpi', query),
   scenarioHistory: (id: string, query?: Query) =>
     get<{ items: Record<string, any>[]; total: number; scenario: Record<string, string> }>(
