@@ -26,6 +26,10 @@ COPY tco ./tco
 COPY catalog ./catalog
 COPY alembic.ini ./
 COPY migrations ./migrations
+# Обслуживающие скрипты запускаются внутри контейнера: им нужны настройки и
+# доступ к базе, которых на хосте нет. Без них не работали ни пересчет снимков,
+# ни challenge set, хотя оба описаны в документации как контейнерные команды.
+COPY scripts ./scripts
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh \
