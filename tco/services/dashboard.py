@@ -285,7 +285,7 @@ def directions(
         for run in latest_runs(session, filters, as_of=today - timedelta(days=30))
     }
 
-    grouped: dict[tuple[str, str, str], list[ScenarioRun]] = {}
+    grouped: dict[tuple[str, str, str | None], list[ScenarioRun]] = {}
     for run in current:
         scenario = run.scenario
         key = (
@@ -296,7 +296,14 @@ def directions(
         grouped.setdefault(key, []).append(run)
 
     rows: list[dict[str, Any]] = []
-    for (origin, destination, transport), runs in sorted(grouped.items()):
+    # У сценария без наблюдаемого транспорта вид проезда пуст, и сортировка
+    # кортежей на нем падает: `None` не сравнивается со строкой. Пустое
+    # значение не заменяется на строку намеренно — «транспорт не наблюдается»
+    # и «вид проезда неизвестен» это разные вещи, и таблица показывает их
+    # по-разному.
+    for (origin, destination, transport), runs in sorted(
+        grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or "")
+    ):
         complete = [run for run in runs if run.total_estimated_cost is not None]
         current_median = _median_total(complete)
         day_median = _median_total(

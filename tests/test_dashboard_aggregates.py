@@ -18,7 +18,7 @@ from tco.db.models.profile import CalculationProfile
 from tco.db.models.reference import City
 from tco.db.models.run import ScenarioRun
 from tco.db.models.scenario import TravelScenario
-from tco.services.dashboard import DashboardFilters, latest_runs
+from tco.services.dashboard import DashboardFilters, directions, latest_runs
 
 #: Наблюдения одного дня: свежее должно вытеснить остальные.
 OBSERVATIONS = (
@@ -113,3 +113,84 @@ class TestLatestRuns:
 
         assert runs[0].scenario.origin_city.code
         assert runs[0].scenario.destination_city.code
+
+
+@pytest.fixture()
+def accommodation_only_scenario(session):
+    """Сценарий без наблюдаемого транспорта — вид проезда у него пуст.
+
+    Такие завела сетка витрины: проживание от города отправления не зависит и
+    наблюдается отдельным сценарием. На стенде их 450 из 1761.
+    """
+    cities = session.scalars(select(City).limit(2)).all()
+    profile = session.scalars(select(CalculationProfile).limit(1)).first()
+    assert len(cities) == 2 and profile is not None, "нужны справочники из bootstrap"
+
+    departure = date.today() + timedelta(days=30)
+    suffix = uuid.uuid4().hex[:8]
+    scenario = TravelScenario(
+        code=f"TEST-NOTRANSPORT-{suffix}",
+        name="Проверка сценария без транспорта",
+        origin_city_id=cities[0].id,
+        destination_city_id=cities[1].id,
+        departure_date=departure,
+        return_date=departure + timedelta(days=5),
+        nights=5,
+        adults=1,
+        transport_type=None,
+        accommodation_type="HOTEL",
+        fingerprint=f"test-notransport-{suffix}",
+    )
+    session.add(scenario)
+    session.flush()
+
+    now = utcnow()
+    session.add(
+        ScenarioRun(
+            scenario_id=scenario.id,
+            run_type="MONITORING",
+            status="SUCCESS",
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+            observation_date=now.date(),
+            lead_time_days=30,
+            profile_id=profile.id,
+            profile_code=profile.code,
+            profile_version=profile.version,
+            normalization_version="1.0.0",
+            engine_version="1.0.0",
+            total_estimated_cost=50_000,
+        )
+    )
+    session.flush()
+    return scenario
+
+
+class TestDirectionsWithoutTransport:
+    def test_table_builds(self, session, accommodation_only_scenario, scenario_with_history):
+        """Сортировка группировки падала на `None`, обваливая таблицу целиком.
+
+        Дефект уносил не одну строку, а весь эндпоинт: на дашборде разом
+        переставали грузиться и «Сравнение направлений», и «Авиа против ЖД» —
+        обе карточки читают `/dashboard/directions`.
+        """
+        rows = directions(session, DashboardFilters())
+
+        codes = {row["transport_type"] for row in rows}
+        assert None in codes, "строка без транспорта должна остаться в таблице"
+        assert "AVIA" in codes
+
+    def test_missing_transport_is_not_disguised_as_a_mode(
+        self, session, accommodation_only_scenario
+    ):
+        """Пустой вид проезда не должен превращаться в пустую строку.
+
+        «Авиа против ЖД» отбирает строки сравнением с 'AVIA' и 'RAIL', и лишний
+        вид в выдаче тихо добавил бы к сравнению третий столбец.
+        """
+        rows = directions(session, DashboardFilters())
+        without = [row for row in rows if row["transport_type"] is None]
+
+        assert without, "сценарий без транспорта не попал в выдачу"
+        assert all(row["transport_type"] != "" for row in rows)
