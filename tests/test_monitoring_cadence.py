@@ -132,3 +132,32 @@ class TestDailyRunIsSplitByComponent:
 
         assert len(transport) + len(accommodation) == len(daily)
         assert not {id(item) for item in transport} & {id(item) for item in accommodation}
+
+
+class TestCollectionTasksAreBounded:
+    """У задач сбора есть предел времени.
+
+    Шестого августа воркер трижды за сутки вставал намертво: поток внутри
+    задачи не возвращался, дочерний процесс оставался занят с открытой
+    транзакцией в базе, свободных не оставалось, очередь переставала
+    разбираться. Контейнер при этом числился здоровым, в логе стояла тишина.
+    Предел не лечит причину, но снимает последствие: задачу снимают, процесс
+    освобождается, воркер продолжает сам.
+    """
+
+    @staticmethod
+    def annotations():
+        from tco.tasks.celery_app import celery_app
+
+        return celery_app.conf.task_annotations
+
+    def test_collect_tasks_have_a_hard_limit(self):
+        limits = self.annotations()["tco.collect.*"]
+
+        assert limits["time_limit"] > limits["soft_time_limit"] > 0
+
+    def test_limit_leaves_room_for_legitimate_collection(self):
+        """Сбор ЖД законно идет минутами: карта мест — отдельный вызов на поезд."""
+        limits = self.annotations()["tco.collect.*"]
+
+        assert limits["soft_time_limit"] >= 240
