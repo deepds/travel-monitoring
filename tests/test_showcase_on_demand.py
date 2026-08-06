@@ -121,9 +121,11 @@ class TestOnDemandFillsDatesOutsideTheGrid:
 
         row = row_of(showcase(session), "AER")
 
-        assert row["transport"] == TRANSPORT_MEDIAN
-        assert row["accommodation"] == HOTEL_MEDIAN
-        assert row["total"] == TRANSPORT_MEDIAN + HOTEL_MEDIAN
+        # Цена идет вместе с тем, на чем она стоит: медиана, минимум, размер
+        # выборки. Одна медиана без них выглядит увереннее, чем есть.
+        assert row["transport"]["median"] == TRANSPORT_MEDIAN
+        assert row["accommodation"]["median"] == HOTEL_MEDIAN
+        assert row["total"]["median"] == TRANSPORT_MEDIAN + HOTEL_MEDIAN
         assert not row["missing"]
 
     def test_page_stops_offering_to_calculate(self, session):

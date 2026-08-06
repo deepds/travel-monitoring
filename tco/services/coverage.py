@@ -142,9 +142,13 @@ def coverage_matrix(
     horizon = today + timedelta(days=days)
     scenarios = _grid_scenarios(session, since=today, until=horizon)
     if not scenarios:
+        # Ответ по форме тот же, что при наличии данных: интерфейс читает одни
+        # и те же поля, и пустая сетка не должна отличаться от полной ничем,
+        # кроме пустых списков.
         return {
             "observation_date": observation_date.isoformat() if observation_date else None,
             "dates": [],
+            "thin_threshold": THIN_SAMPLE_THRESHOLD,
             "transport": [],
             "accommodation": [],
             "legend": CELL_STATES,
