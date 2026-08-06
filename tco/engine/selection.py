@@ -95,12 +95,27 @@ class SelectionStats:
         }
 
 
-def unclassified_attributes(offer: Offer) -> frozenset[str]:
+def unclassified_attributes(
+    offer: Offer, spec: ScenarioFilterSpec | None = None
+) -> frozenset[str]:
     """Признаки предложения, оставшиеся неопределенными.
 
     Считается по фактическим значениям, а не по ``classification_status``:
     статус хранит только самую значимую проблему, а для разбора «чего именно
     не хватает» нужен полный список.
+
+    ``spec`` исключает признаки, по которым отбор не идет. «Предложение не
+    классифицировано» должно означать «мы не можем сказать, подходит ли оно
+    под требования»; если требования нет, вопрос не возникает и пробел не
+    является пробелом. Без этого получалось внутреннее противоречие: питание
+    не запрашивалось, предложение фильтр проходило — и оно же считалось
+    неклассифицированным, за что наказывался источник.
+
+    На живых данных это стало заметно после перехода на полный обход выдачи:
+    условия отмены Туту заполняет не у всех объектов, и на 200 предложениях
+    доля неизвестных дошла до 78 % против порога в 40 %. Источник переставал
+    допускаться к расчету, и проживание выходило ``NO_DATA`` при двух сотнях
+    собранных предложений.
     """
     found: set[str] = set()
 
@@ -118,10 +133,20 @@ def unclassified_attributes(offer: Offer) -> frozenset[str]:
 
     accommodation = offer.accommodation
     if accommodation is not None:
-        if accommodation.meal_type == MealType.UNKNOWN.value:
+        # Питание и условие отмены проверяются, только если сценарий их
+        # запрашивает: по «любому» отбора нет, и неизвестность признака не
+        # мешает ни отбору, ни цене.
+        asks_meal = spec is None or spec.meal_type != MealType.ANY
+        asks_cancellation = spec is None or spec.cancellation_filter not in (
+            "ANY",
+            None,
+        )
+        if asks_meal and accommodation.meal_type == MealType.UNKNOWN.value:
             found.add(OfferAttribute.MEAL.value)
-        if accommodation.cancellation_type == CancellationType.UNKNOWN.value:
+        if asks_cancellation and accommodation.cancellation_type == CancellationType.UNKNOWN.value:
             found.add(OfferAttribute.CANCELLATION.value)
+        # Вместимость проверяется всегда: она про то, поместится ли в номер
+        # заданный состав туристов, а состав задан у любого сценария.
         if not accommodation.capacity_confirmed:
             found.add(OfferAttribute.CAPACITY.value)
     return frozenset(found)

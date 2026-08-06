@@ -16,7 +16,7 @@ from typing import Collection, Sequence
 from tco.core.enums import ComponentType, ConnectorOutcome, ExclusionReason, OfferType
 from tco.core.utils import minutes_between, to_decimal, utcnow
 from tco.db.models.offer import Offer
-from tco.engine.selection import unclassified_attributes
+from tco.engine.selection import ScenarioFilterSpec, unclassified_attributes
 from tco.engine.statistics import (
     Distribution,
     describe,
@@ -214,6 +214,7 @@ def check_eligibility(
     rules: ProfileRules,
     *,
     now: datetime | None = None,
+    spec: ScenarioFilterSpec | None = None,
 ) -> tuple[bool, list[str], float | None]:
     """Проверяет допуск источника к расчету компонента.
 
@@ -263,7 +264,7 @@ def check_eligibility(
             unclassified = [
                 offer
                 for offer in unclassified
-                if unclassified_attributes(offer) - info.unreported_attributes
+                if unclassified_attributes(offer, spec) - info.unreported_attributes
             ]
         unclassified_ratio = len(unclassified) / total
         if unclassified_ratio > eligibility.max_unclassified_fare_ratio:
@@ -319,6 +320,7 @@ def aggregate_source(
     rules: ProfileRules,
     *,
     now: datetime | None = None,
+    spec: ScenarioFilterSpec | None = None,
 ) -> SourceAggregate:
     counted = [
         offer for offer in source_offers if offer.exclusion_reason == ExclusionReason.NONE.value
@@ -327,7 +329,7 @@ def aggregate_source(
     prices = [price for price in prices if price is not None]
 
     eligible, reasons, age_minutes = check_eligibility(
-        info, counted, source_offers, rules, now=now
+        info, counted, source_offers, rules, now=now, spec=spec
     )
     distribution = describe(prices, rules.aggregation.percentile_method)
 
@@ -390,6 +392,7 @@ def aggregate_component(
     rules: ProfileRules,
     *,
     now: datetime | None = None,
+    spec: ScenarioFilterSpec | None = None,
 ) -> ComponentAggregate:
     """Полная агрегация компонента: по источникам, затем между источниками."""
     source_aggregates: list[SourceAggregate] = []
@@ -397,7 +400,12 @@ def aggregate_component(
         info = source_infos[source_code]
         source_aggregates.append(
             aggregate_source(
-                info, component, offers_by_source.get(source_code, []), rules, now=now
+                info,
+                component,
+                offers_by_source.get(source_code, []),
+                rules,
+                now=now,
+                spec=spec,
             )
         )
 

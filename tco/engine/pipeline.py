@@ -226,8 +226,15 @@ def calculate_run(payload: EngineInput) -> EngineResult:
         payload.source_infos, accommodation_by_source, (OfferType.ACCOMMODATION,)
     )
 
+    # Параметры сценария доходят до допуска источника: признак, по которому
+    # отбора нет, не должен считаться пробелом классификации.
     transport = aggregate_component(
-        ComponentType.TRANSPORT, transport_infos, transport_by_source, rules, now=observed_at
+        ComponentType.TRANSPORT,
+        transport_infos,
+        transport_by_source,
+        rules,
+        now=observed_at,
+        spec=spec,
     )
     accommodation = aggregate_component(
         ComponentType.ACCOMMODATION,
@@ -235,6 +242,7 @@ def calculate_run(payload: EngineInput) -> EngineResult:
         accommodation_by_source,
         rules,
         now=observed_at,
+        spec=spec,
     )
 
     _mark_ineligible_sources(transport_offers, transport)

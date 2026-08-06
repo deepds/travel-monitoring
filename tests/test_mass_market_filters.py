@@ -224,6 +224,90 @@ class TestApartmentsAreNotMassMarket:
         assert stay_reason(hotel(room_name="Апартаменты"), ProfileRules.parse({})) is None
 
 
+class TestUnclassifiedIsAboutTheQuestionAsked:
+    """Пробел в признаке считается пробелом, только если признак спрашивают.
+
+    «Предложение не классифицировано» должно означать «нельзя сказать,
+    подходит ли оно под требования». Если требования нет, вопрос не
+    возникает. Прежде получалось внутреннее противоречие: питание не
+    запрашивалось, фильтр предложение пропускал — и оно же считалось
+    неклассифицированным, за что наказывался источник.
+
+    На живых данных это проявилось после перехода на полный обход выдачи:
+    условия отмены Туту заполняет не у всех объектов, и на 200 предложениях
+    доля неизвестных дошла до 78 % при пороге 40 %. Источник переставал
+    допускаться, и проживание выходило NO_DATA при двух сотнях собранных
+    предложений.
+    """
+
+    @staticmethod
+    def _spec(*, meal: MealType, cancellation: str) -> ScenarioFilterSpec:
+        return ScenarioFilterSpec(
+            transport_type=None,
+            flight_fare_type=None,
+            rail_class=None,
+            accommodation_type=AccommodationType.HOTEL,
+            stars=StarsFilter.S3,
+            meal_type=meal,
+            cancellation_filter=cancellation,
+        )
+
+    @staticmethod
+    def _unknown_offer() -> Offer:
+        offer = _offer(OfferType.ACCOMMODATION, 7_000)
+        offer.accommodation = AccommodationOffer(
+            accommodation_type=AccommodationType.HOTEL.value,
+            stars=3,
+            stars_status="RATED",
+            meal_type=MealType.UNKNOWN.value,
+            cancellation_type="UNKNOWN",
+            capacity_confirmed=True,
+            room_name="Стандартный",
+            nights=1,
+            room_count=1,
+        )
+        return offer
+
+    def test_unasked_attributes_are_not_gaps(self):
+        from tco.engine.selection import unclassified_attributes
+
+        spec = self._spec(meal=MealType.ANY, cancellation="ANY")
+
+        assert unclassified_attributes(self._unknown_offer(), spec) == frozenset()
+
+    def test_asked_meal_is_a_gap_when_unknown(self):
+        from tco.engine.selection import unclassified_attributes
+
+        spec = self._spec(meal=MealType.BREAKFAST, cancellation="ANY")
+
+        assert "MEAL" in unclassified_attributes(self._unknown_offer(), spec)
+
+    def test_asked_cancellation_is_a_gap_when_unknown(self):
+        from tco.engine.selection import unclassified_attributes
+
+        spec = self._spec(meal=MealType.ANY, cancellation="FREE_CANCELLATION")
+
+        assert "CANCELLATION" in unclassified_attributes(self._unknown_offer(), spec)
+
+    def test_without_spec_every_gap_counts(self):
+        """Вызов без сценария остается прежним: он не знает, что спрашивали."""
+        from tco.engine.selection import unclassified_attributes
+
+        found = unclassified_attributes(self._unknown_offer())
+
+        assert {"MEAL", "CANCELLATION"} <= found
+
+    def test_capacity_is_always_checked(self):
+        """Состав туристов задан у любого сценария, поэтому вопрос есть всегда."""
+        from tco.engine.selection import unclassified_attributes
+
+        offer = self._unknown_offer()
+        offer.accommodation.capacity_confirmed = False
+        spec = self._spec(meal=MealType.ANY, cancellation="ANY")
+
+        assert unclassified_attributes(offer, spec) == frozenset({"CAPACITY"})
+
+
 class TestSelectionIsRepeatable:
     """Повторный отбор начинается с чистого листа.
 
