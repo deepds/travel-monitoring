@@ -52,6 +52,7 @@ from tco.services.snapshot_builder import (
     collect_into_snapshot,
     create_snapshot,
     finalize_snapshot,
+    scenarios_needing_backfill,
     transport_offer_type_for,
 )
 
@@ -551,6 +552,8 @@ def refresh_all_monitoring_scenarios(
     limit: int | None = None,
     with_tag: str | None = None,
     without_tag: str | None = None,
+    transport_type: str | None = None,
+    only_missing: bool = False,
     requested_by: str = "scheduler",
 ) -> dict[str, Any]:
     """Плановый прогон активных сценариев мониторинга.
@@ -587,6 +590,17 @@ def refresh_all_monitoring_scenarios(
             active = [item for item in active if with_tag in (item.tags or [])]
         if without_tag:
             active = [item for item in active if without_tag not in (item.tags or [])]
+        # Вид проезда разводит прогоны по времени: ЖД и авиа одним залпом — это
+        # 1200 сценариев подряд, и именно такой залп открыл размыкатель цепи
+        # 6 августа. Фильтр параметром, а не тегом: тег пришлось бы дописывать
+        # всей сетке, а признак и так есть в самом сценарии.
+        if transport_type:
+            active = [item for item in active if item.transport_type == transport_type]
+        # Досбор: остаются только те, кто сегодня без наблюдения или собрался
+        # со сбоем источника. Отбор идет после всех прочих фильтров — незачем
+        # спрашивать базу о сценариях, которые в прогон и так не попадают.
+        if only_missing:
+            active = scenarios_needing_backfill(session, active)
         if limit:
             active = active[:limit]
 
@@ -594,6 +608,8 @@ def refresh_all_monitoring_scenarios(
             (
                 f"with={with_tag or ''}",
                 f"without={without_tag or ''}",
+                f"transport={transport_type or ''}",
+                f"missing={'1' if only_missing else ''}",
                 f"limit={limit or ''}",
                 f"by={requested_by}",
             )
@@ -613,6 +629,7 @@ def refresh_all_monitoring_scenarios(
                 "force_refresh": force_refresh,
                 "with_tag": with_tag,
                 "without_tag": without_tag,
+                "transport_type": transport_type,
                 "requested_by": requested_by,
             },
             created_by=requested_by,
@@ -677,3 +694,31 @@ def refresh_all_monitoring_scenarios(
         "job_id": batch_job_id,
         "group_id": str(async_result.id),
     }
+
+
+@shared_task(name="tco.monitoring.backfill_missing_observations", bind=True)
+def backfill_missing_observations(
+    self,  # noqa: ANN001
+    profile_id: str | None = None,
+    requested_by: str = "scheduler",
+) -> dict[str, Any]:
+    """Добирает то, что не собралось за ночь.
+
+    Штатный шаг расписания, а не аварийная мера. Ночной прогон теряет
+    сценарии по причинам, которые к утру уже прошли: источник отвечал
+    таймаутом, срабатывал размыкатель цепи, воркер перезапускали посреди
+    прогона. Раньше такие дыры оставались до следующих суток и выглядели на
+    витрине отсутствием рынка.
+
+    ``force_refresh`` включен намеренно: снимок за это окно наблюдения мог
+    остаться пустой оболочкой после оборванного прогона, и без соли в ключе
+    идемпотентности сбор вернул бы его же вместо новой попытки.
+    """
+    # ``run`` — вызов тела задачи в текущем процессе: диспетчеризация дешевая,
+    # заводить ради нее еще одну задачу в очереди незачем.
+    return refresh_all_monitoring_scenarios.run(
+        profile_id=profile_id,
+        force_refresh=True,
+        only_missing=True,
+        requested_by=requested_by,
+    )

@@ -31,6 +31,10 @@ COPY migrations ./migrations
 # ни challenge set, хотя оба описаны в документации как контейнерные команды.
 COPY scripts ./scripts
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Проверка живости воркера: healthcheck спрашивает, разбирается ли очередь, а
+# не отвечает ли процесс. Прежний `celery inspect ping` отвечал из главного
+# процесса и при намертво занятом пуле показывал контейнер здоровым.
+COPY docker/healthcheck_worker.py /usr/local/bin/healthcheck_worker.py
 
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && python -m pip install --no-deps -e . \

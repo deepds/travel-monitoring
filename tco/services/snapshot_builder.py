@@ -995,6 +995,65 @@ def _artifact_body(artifact: RawArtifact) -> Any:
     return payload
 
 
+#: Исходы, после которых сценарий стоит спросить еще раз. ``EMPTY`` сюда не
+#: входит намеренно: источник ответил, и «предложений нет» — это ответ о рынке,
+#: а не сбой. Повторять его каждый день значило бы тратить обращения на
+#: направления вроде Самара — Казань, где сообщения не существует.
+RETRIABLE_OUTCOMES: frozenset[str] = frozenset(
+    {
+        ConnectorOutcome.TIMEOUT.value,
+        ConnectorOutcome.RATE_LIMITED.value,
+        ConnectorOutcome.TRANSPORT_ERROR.value,
+        ConnectorOutcome.SCHEMA_ERROR.value,
+        ConnectorOutcome.CIRCUIT_OPEN.value,
+    }
+)
+
+
+def scenarios_needing_backfill(
+    session: Session,
+    scenarios: Sequence[TravelScenario],
+    *,
+    observation_date: date | None = None,
+) -> list[TravelScenario]:
+    """Сценарии, которые сегодня остались без наблюдения или собрались плохо.
+
+    Два случая: снимка за день нет вовсе (задача не дошла, воркер перезапустили,
+    прогон оборвался) и снимок есть, но хотя бы один источник ответил сбоем —
+    таймаут, отказ транспорта, открытый размыкатель. К моменту досбора причина
+    обычно уже прошла: размыкатель остывает за 900 секунд.
+
+    Пустой ответ источника сбоем не считается, см. ``RETRIABLE_OUTCOMES``.
+    """
+    if not scenarios:
+        return []
+
+    observation_date = observation_date or utcnow().date()
+    ids = [item.id for item in scenarios]
+
+    observed = set(
+        session.scalars(
+            select(MarketSnapshot.scenario_id)
+            .where(MarketSnapshot.scenario_id.in_(ids))
+            .where(MarketSnapshot.observation_date == observation_date)
+        ).all()
+    )
+    failed = set(
+        session.scalars(
+            select(MarketSnapshot.scenario_id)
+            .join(
+                SnapshotSourceResult,
+                SnapshotSourceResult.market_snapshot_id == MarketSnapshot.id,
+            )
+            .where(MarketSnapshot.scenario_id.in_(ids))
+            .where(MarketSnapshot.observation_date == observation_date)
+            .where(SnapshotSourceResult.outcome.in_(RETRIABLE_OUTCOMES))
+        ).all()
+    )
+
+    return [item for item in scenarios if item.id not in observed or item.id in failed]
+
+
 def _safe_headers(headers: dict[str, str]) -> dict[str, str]:
     """Оставляет только технические заголовки, без cookie и авторизации."""
     allowed = {

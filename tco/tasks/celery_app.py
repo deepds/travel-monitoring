@@ -103,7 +103,7 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "compute", "expires": _snapshot_expires},
         "kwargs": {"without_tag": "cadence:daily"},
     },
-    # Суточный прогон разнесен на два: проезд в час ночи, проживание в два.
+    # Суточный прогон разнесен по компонентам, каждой — свое окно с запасом.
     #
     # Одним залпом это 1758 сценариев, и источник такого не выдерживает: на
     # прогоне 6 августа размыкатель цепи открылся в середине, и проживание —
@@ -111,23 +111,38 @@ celery_app.conf.beat_schedule = {
     # 465. Тот же набор, собранный отдельно, прошел без единого срабатывания
     # размыкателя: 1154 успешных обращения.
     #
-    # Час разрыва берется с запасом: проезд укладывается примерно в сорок
-    # минут, и если он затянется, проживание встанет в очередь за ним, а не
-    # рядом с ним.
+    # Окна взяты с запасом от наблюдавшейся длительности: если прогон
+    # затянется, следующий не встанет ему в спину, а вся ночная работа
+    # заканчивается до десяти утра, оставляя четырнадцать часов на повтор.
     #
-    # Оба прогона попадают в одно часовое окно идемпотентности, но получают
-    # разные задачи: область отбора входит в ключ.
-    "monitoring-snapshot-daily": {
+    # Прогоны попадают в одно окно идемпотентности, но получают разные задачи:
+    # область отбора вместе с видом проезда входит в ключ.
+    "grid-rail": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
         "schedule": crontab(minute="0", hour="1"),
-        "options": {"queue": "compute", "expires": 20 * 3600},
-        "kwargs": {"with_tag": "cadence:daily", "without_tag": "showcase-accommodation"},
+        "options": {"queue": "compute", "expires": 2 * 3600},
+        "kwargs": {"with_tag": "cadence:daily", "transport_type": "RAIL"},
     },
-    "monitoring-snapshot-daily-accommodation": {
+    "grid-avia": {
         "task": "tco.monitoring.refresh_all_monitoring_scenarios",
-        "schedule": crontab(minute="0", hour="2"),
-        "options": {"queue": "compute", "expires": 20 * 3600},
+        "schedule": crontab(minute="30", hour="3"),
+        "options": {"queue": "compute", "expires": 2 * 3600},
+        "kwargs": {"with_tag": "cadence:daily", "transport_type": "AVIA"},
+    },
+    "grid-accommodation": {
+        "task": "tco.monitoring.refresh_all_monitoring_scenarios",
+        "schedule": crontab(minute="0", hour="6"),
+        "options": {"queue": "compute", "expires": 2 * 3600},
         "kwargs": {"with_tag": "showcase-accommodation"},
+    },
+    # Досбор — штатный шаг, а не аварийная мера: он добирает то, что не
+    # собралось ночью, пока причина еще действует редко. Сценарии, где источник
+    # ответил таймаутом или сработал размыкатель, попадают сюда сами —
+    # размыкатель к девяти утра остывает (по умолчанию 900 секунд).
+    "backfill-missing": {
+        "task": "tco.monitoring.backfill_missing_observations",
+        "schedule": crontab(minute="0", hour="9"),
+        "options": {"queue": "compute", "expires": 4 * 3600},
     },
     # Раньше планового сбора: сетка должна быть достроена к моменту, когда
     # начнется наблюдение, иначе самая дальняя дата горизонта пропустит сутки.

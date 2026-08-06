@@ -87,6 +87,11 @@ services:
       retries: 5
       start_period: 30s
 
+  # Сбор и расчет. Отделен от обслуживания намеренно: пока все очереди
+  # обслуживал один воркер, забитый сбором пул не выполнял и детектор зависших
+  # задач — система теряла способность чинить себя ровно тогда, когда это
+  # нужно. Шестого августа воркер трижды за сутки вставал намертво, и лечением
+  # был только перезапуск руками, а прогон идет ночью.
   worker:
     <<: *app
     command: ["worker"]
@@ -96,16 +101,56 @@ services:
       RAW_STORAGE_DIR: /data/raw
       EXPORT_STORAGE_DIR: /data/exports
       CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
+      CELERY_QUEUES: collect,compute
+    # Проверка спрашивает, разбирается ли очередь. Прежний `inspect ping`
+    # отвечал из главного процесса и показывал контейнер здоровым при
+    # намертво занятом пуле — отсюда «healthy, в логе тишина, очередь стоит».
     healthcheck:
-      test: ["CMD-SHELL", "celery -A tco.tasks.celery_app:celery_app inspect ping -d worker@$$HOSTNAME"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "python", "/usr/local/bin/healthcheck_worker.py"]
+      interval: 60s
+      timeout: 15s
       retries: 3
-      start_period: 40s
+      start_period: 60s
+    labels:
+      autoheal: "true"
+
+  # Обслуживание и пользовательские расчеты. Малый параллелизм: эти задачи
+  # короткие, а их назначение — оставаться доступными, когда сбор занят.
+  worker-service:
+    <<: *app
+    command: ["worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-tco}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tco}
+      REDIS_URL: redis://redis:6379/0
+      RAW_STORAGE_DIR: /data/raw
+      EXPORT_STORAGE_DIR: /data/exports
+      CELERY_CONCURRENCY: ${CELERY_SERVICE_CONCURRENCY:-2}
+      CELERY_QUEUES: maintenance,ondemand
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/healthcheck_worker.py"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    labels:
+      autoheal: "true"
 
   beat:
     <<: *app
     command: ["beat"]
+
+  # Последняя линия защиты: зависший контейнер не падает, поэтому
+  # `restart: unless-stopped` его не поднимет — перезапускать нездоровые
+  # контейнеры некому. Autoheal делает это по метке, не трогая остальные.
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 120
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
 
   # Интерфейс: статика React-приложения + проксирование /api на backend,
   # поэтому фронтенд и API для браузера находятся на одном origin.

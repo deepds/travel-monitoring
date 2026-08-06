@@ -174,3 +174,121 @@ class TestCollectionTasksAreBounded:
         источнике шел полчаса на сценарий.
         """
         assert not [key for key in self.annotations() if key.endswith(".*")]
+
+
+class TestBackfillSelection:
+    """Что именно добирается после ночного прогона.
+
+    Досбор — штатный шаг расписания: ночью сценарий теряется по причинам,
+    которые к утру уже прошли (таймаут источника, открытый размыкатель,
+    перезапуск воркера посреди прогона). Раньше такая дыра оставалась до
+    следующих суток и на витрине выглядела отсутствием рынка.
+
+    Важна и обратная сторона: пустой ответ источника добирать не нужно —
+    «предложений нет» это ответ о рынке, а не сбой. Иначе каждую ночь
+    тратились бы обращения на направления вроде Самара — Казань, где
+    сообщения не существует.
+    """
+
+    OBSERVATION_DATE = date(2026, 9, 2)
+
+    @staticmethod
+    def _scenario(session, suffix: str):
+        import uuid as _uuid
+        from datetime import timedelta
+
+        from tco.db.models.reference import City
+
+        cities = session.scalars(select(City).limit(2)).all()
+        scenario = TravelScenario(
+            code=f"TEST-BACKFILL-{suffix}",
+            name="Проверка отбора для досбора",
+            origin_city_id=cities[0].id,
+            destination_city_id=cities[1].id,
+            departure_date=TODAY,
+            return_date=TODAY + timedelta(days=5),
+            nights=5,
+            adults=1,
+            transport_type="RAIL",
+            fingerprint=f"test-backfill-{suffix}-{_uuid.uuid4().hex[:6]}",
+        )
+        session.add(scenario)
+        session.flush()
+        return scenario
+
+    @classmethod
+    def _snapshot(cls, session, scenario, *, outcome: str | None):
+        import uuid as _uuid
+
+        from tco.core.utils import utcnow
+        from tco.db.models.snapshot import MarketSnapshot, SnapshotSourceResult
+        from tco.db.models.source import Source
+
+        moment = utcnow()
+        snapshot = MarketSnapshot(
+            scenario_id=scenario.id,
+            scenario_fingerprint=scenario.fingerprint,
+            snapshot_type="SCHEDULED",
+            requested_at=moment,
+            completed_at=moment,
+            observed_at=moment,
+            observation_date=cls.OBSERVATION_DATE,
+            status="COMPLETE",
+            normalization_version="1.0.0",
+            idempotency_key=f"test-backfill-{_uuid.uuid4().hex}",
+            created_at=moment,
+        )
+        session.add(snapshot)
+        session.flush()
+
+        if outcome is not None:
+            source = session.scalars(select(Source).limit(1)).first()
+            session.add(
+                SnapshotSourceResult(
+                    market_snapshot_id=snapshot.id,
+                    source_id=source.id,
+                    source_code=source.code,
+                    source_name=source.name,
+                    offer_type="RAIL",
+                    outcome=outcome,
+                    collected_at=moment,
+                    fetched_at=moment,
+                )
+            )
+            session.flush()
+        return snapshot
+
+    def _select(self, session, scenarios):
+        from tco.services.snapshot_builder import scenarios_needing_backfill
+
+        return scenarios_needing_backfill(
+            session, scenarios, observation_date=self.OBSERVATION_DATE
+        )
+
+    def test_scenario_without_any_snapshot_is_taken(self, session):
+        """Прогон до сценария не дошел — добираем."""
+        scenario = self._scenario(session, "missing")
+
+        assert self._select(session, [scenario]) == [scenario]
+
+    def test_successful_snapshot_is_left_alone(self, session):
+        """Собралось успешно — второй раз не спрашиваем."""
+        scenario = self._scenario(session, "success")
+        self._snapshot(session, scenario, outcome="SUCCESS")
+
+        assert self._select(session, [scenario]) == []
+
+    def test_empty_answer_is_not_a_failure(self, session):
+        """Источник ответил «предложений нет» — это ответ о рынке, а не сбой."""
+        scenario = self._scenario(session, "empty")
+        self._snapshot(session, scenario, outcome="EMPTY")
+
+        assert self._select(session, [scenario]) == []
+
+    @pytest.mark.parametrize("outcome", ["TIMEOUT", "CIRCUIT_OPEN", "TRANSPORT_ERROR"])
+    def test_source_failure_is_retried(self, session, outcome):
+        """Отказ источника к утру обычно проходит — пробуем еще раз."""
+        scenario = self._scenario(session, f"fail-{outcome.lower()}")
+        self._snapshot(session, scenario, outcome=outcome)
+
+        assert self._select(session, [scenario]) == [scenario]
