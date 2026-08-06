@@ -40,9 +40,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
 from tco.db.models.profile import CalculationProfile  # noqa: E402
+from tco.db.models.run import ScenarioRun  # noqa: E402
 from tco.db.models.scenario import TravelScenario  # noqa: E402
 from tco.db.models.snapshot import MarketSnapshot  # noqa: E402
 from tco.db.session import session_scope  # noqa: E402
@@ -65,6 +66,11 @@ def main() -> int:
         "--profile-code",
         default=None,
         help="Считать всё этой методикой вместо той, что закреплена за сценарием",
+    )
+    parser.add_argument(
+        "--redo-failed",
+        action="store_true",
+        help="Только снимки, чей последний расчет FAILED или NO_DATA",
     )
     parser.add_argument("--dry-run", action="store_true", help="Только показать, что будет сделано")
     args = parser.parse_args()
@@ -96,10 +102,37 @@ def main() -> int:
             stmt = stmt.limit(args.limit)
         snapshots = session.scalars(stmt).all()
 
+        # Повтор после неудачного пересчета: гонять заново весь диапазон незачем,
+        # а по одному снимку — слишком долго. Снимки без данных в источнике сюда
+        # тоже попадут и снова дадут NO_DATA — это дешевле, чем отличать их от
+        # неудач по причине.
+        failed_only: set = set()
+        if args.redo_failed:
+            latest = (
+                select(ScenarioRun.market_snapshot_id, func.max(ScenarioRun.started_at))
+                .where(ScenarioRun.market_snapshot_id.is_not(None))
+                .group_by(ScenarioRun.market_snapshot_id)
+                .subquery()
+            )
+            failed_only = {
+                row[0]
+                for row in session.execute(
+                    select(ScenarioRun.market_snapshot_id)
+                    .join(
+                        latest,
+                        (ScenarioRun.market_snapshot_id == latest.c.market_snapshot_id)
+                        & (ScenarioRun.started_at == latest.c.max_1),
+                    )
+                    .where(ScenarioRun.status.in_(("FAILED", "NO_DATA")))
+                ).all()
+            }
+
         planned: list[tuple[str, str]] = []
         by_profile: dict[str, int] = {}
         skipped_purged = 0
         for snapshot in snapshots:
+            if args.redo_failed and snapshot.id not in failed_only:
+                continue
             # Предложения могли быть вычищены политикой хранения: пересчитывать
             # тогда нечего, и задача упала бы с ошибкой на каждом таком снимке.
             if not snapshot.offers_available:
